@@ -1952,7 +1952,17 @@ TASKS: ${JSON.stringify(state.tasks.filter(t=>!isTaskComplete(t)))}
     
     let raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     raw = raw.replace(/```json/g, '').replace(/```/g, '').trim();
-    const recs = JSON.parse(raw);
+    // Replace all literal newlines with spaces to prevent "Unterminated string" JSON parse errors
+    raw = raw.replace(/[\n\r]/g, ' ');
+    console.log("Raw AI Recommendations payload:", raw);
+    
+    let recs;
+    try {
+      recs = JSON.parse(raw);
+    } catch (parseErr) {
+      console.error("Failed to parse recommendations JSON:", parseErr);
+      return; // Stop execution if parse fails
+    }
     
     state.lastRecommendationDate = today;
     state.lastRecommendations = recs;
