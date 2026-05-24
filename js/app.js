@@ -1677,13 +1677,13 @@ Total committed hours: ${totalWeeklyHours.toFixed(1)}h (Limit: ${state.weeklyHou
 Status: ${isOverloaded ? 'OVERLOADED (warn the user)' : 'Healthy'}
 
 TODAY'S SCHEDULE:
-${todayEvs.length ? todayEvs.map(e=>`- ${e.title} | ${fmt12(e.start)}–${fmt12(e.end)} | ${e.location||'N/A'} | ${e.category}`).join('\n') : 'No events today'}
+${todayEvs.length ? todayEvs.map(e=>`- [ID:${e.id}] ${e.title} | ${fmt12(e.start)}–${fmt12(e.end)} | ${e.location||'N/A'} | ${e.category}`).join('\n') : 'No events today'}
 
-ALL UPCOMING EVENTS (next 30):
-${allEvs.map(e=>`- ${e.title} | ${e.date} | ${fmt12(e.start)}–${fmt12(e.end)} | ${e.location||'N/A'} | ${e.recurring||'once'}`).join('\n')}
+ALL UPCOMING EVENTS (next 20):
+${allEvs.map(e=>`- [ID:${e.id}] ${e.title} | ${e.date} | ${fmt12(e.start)}–${fmt12(e.end)} | ${e.location||'N/A'} | ${e.recurring||'once'}`).join('\n')}
 
 PENDING TASKS:
-${pendingTasks.length ? pendingTasks.map(t=>`- ${t.name} | Due: ${t.due} | ${t.priority} priority`).join('\n') : 'No pending tasks'}
+${pendingTasks.length ? pendingTasks.map(t=>`- [ID:${t.id}] ${t.name} | Due: ${t.due} | ${t.priority} priority`).join('\n') : 'No pending tasks'}
 
 TIME RESOLUTION RULES (apply these before creating events):
 - "morning" → 09:00–10:00
@@ -1698,22 +1698,24 @@ TIME RESOLUTION RULES (apply these before creating events):
 - Always confirm the resolved time in your response before executing the ACTION block.
 
 YOUR CAPABILITIES:
-You can help the user manage their schedule through conversation. When a user wants to add/edit/delete events or tasks, respond in a friendly way AND include a JSON action block at the END of your response in this exact format:
+You can help the user manage their schedule through conversation. When a user wants to add/edit/delete events or tasks, EXECUTE THE ACTION IMMEDIATELY — do not describe what you are about to do, do not list the events you will change, do not ask for confirmation unless something is genuinely ambiguous. Just do it and reply with a short confirmation like "Done! Removed X" or "Added Y for tomorrow at 9 PM." Keep replies under 3 sentences unless the user asks a question. Include a JSON action block for every operation in this exact format:
 
 ACTION:{"type":"create_event","data":{"title":"...","date":"YYYY-MM-DD","start":"HH:MM","end":"HH:MM","category":"class|study|meeting|personal|other","location":"...","recurring":"none|daily|weekly|weekends|biweekly|monthly","recurringEndDate":"","color":""}}
 
 ACTION:{"type":"create_task","data":{"name":"...","due":"YYYY-MM-DD","priority":"high|medium|low","recurring":"none|daily|weekly","subtasks":[]}}
 
-ACTION:{"type":"delete_event","data":{"id":"..."}}
+ACTION:{"type":"delete_event","data":{"id":"<use the exact ID from [ID:xxx] in the event list above>"}}
 
-ACTION:{"type":"delete_task","data":{"id":"..."}}
+ACTION:{"type":"delete_task","data":{"id":"<use the exact ID from [ID:xxx] in the task list above>"}}
 
 Only include the ACTION block when actually performing an operation. If info is missing, ask clarifying questions before executing.
 
-PROACTIVE BEHAVIOR RULES:
-- After any event or task is created, proactively suggest one follow-up action (e.g., 'Want me to add a study session the day before?').
-- If the student mentions being stressed or overwhelmed, acknowledge it briefly before giving practical advice or suggesting to reschedule lower-priority items.
-- Always be conversational, helpful, and proactive about suggesting study sessions or reminders.`;
+BEHAVIOR RULES:
+- NEVER narrate what you are about to do. Just do it.
+- NEVER list events before deleting them. Just delete and confirm.
+- Keep all replies short — 1 to 3 sentences max.
+- After completing an action, you may suggest ONE follow-up in the same short reply.
+- If the user is stressed or overwhelmed, acknowledge briefly then give one practical suggestion.`;
 }
 
 // addMsg — renders a chat bubble.
