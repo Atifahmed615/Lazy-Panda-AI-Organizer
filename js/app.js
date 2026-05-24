@@ -70,11 +70,17 @@ function loadState() {
       state = { ...state, ...JSON.parse(saved) };
       if (!Array.isArray(state.events)) state.events = [];
       if (!Array.isArray(state.tasks)) state.tasks = [];
-      // Migration: remove duplicate default events (e6/e8 were duplicates of e5/e7 with recurring:'weekends')
-      const _dedupSeen = new Set();
+      // Migration: remove duplicate events.
+      // Pass 1 — prefer recurring events: sort so recurring ones come first,
+      //           then deduplicate by title+start+end (ignoring recurring value).
+      //           This removes 'none' one-off copies of classes already covered by a recurrence rule.
+      // Pass 2 — remove exact same-id dupes just in case.
       const _beforeDedup = state.events.length;
+      const _recurringRank = r => (r && r !== 'none') ? 0 : 1;
+      state.events.sort((a, b) => _recurringRank(a.recurring) - _recurringRank(b.recurring));
+      const _dedupSeen = new Set();
       state.events = state.events.filter(ev => {
-        const key = `${ev.title}|${ev.start}|${ev.end}|${ev.recurring}`;
+        const key = `${ev.title.trim().toLowerCase()}|${ev.start}|${ev.end}`;
         if (_dedupSeen.has(key)) return false;
         _dedupSeen.add(key);
         return true;
@@ -1645,7 +1651,7 @@ let chatHistory = [];
 function buildSystemPrompt() {
   const today = new Date();
   const todayEvs = getTodayEvents();
-  const allEvs = getAllEvents().slice(0,30);
+  const allEvs = getAllEvents().slice(0,20);
   const pendingTasks = state.tasks.filter(t=>!isTaskComplete(t));
   
   // Get workload summary
@@ -1978,7 +1984,7 @@ async function sendMessage() {
     const res = await geminiFetch({
         system_instruction: { parts: [{ text: buildSystemPrompt() }] },
         contents: contents,
-        generationConfig: { maxOutputTokens: 1200, temperature: 0.7 }
+        generationConfig: { maxOutputTokens: 4096, temperature: 0.4 }
       });
 
     removeTyping();
@@ -2000,10 +2006,14 @@ async function sendMessage() {
       const errMsg = data.error?.message || 'API error ' + res.status;
       addMsg('ai', '⚠️ ' + errMsg);
     } else {
-      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I got an empty response.';
+      const candidate = data.candidates?.[0];
+      const raw = candidate?.content?.parts?.[0]?.text || 'Sorry, I got an empty response.';
+      // Warn if response was cut off due to token limit
+      const truncated = candidate?.finishReason === 'MAX_TOKENS';
       const { cleanText, results } = parseAndExecuteActions(raw);
       const actionSummary = results.join(', ');
-      addMsg('ai', cleanText || raw, actionSummary || null);
+      const displayText = (cleanText || raw) + (truncated ? '\n\n⚠️ My response was cut off — please ask me to continue.' : '');
+      addMsg('ai', displayText, actionSummary || null);
       chatHistory.push({ role: 'model', parts: [{ text: raw }] });
     }
   } catch(e) {
@@ -2966,7 +2976,7 @@ function detectConflicts(dateStr, dayOfWeek) {
     for (let j = i + 1; j < evs.length; j++) {
       const a = evs[i], b = evs[j];
       // Skip exact duplicates (same title + same time = duplicate data, not a real conflict)
-      if (a.title === b.title && a.start === b.start && a.end === b.end) continue;
+      if (a.title.trim().toLowerCase() === b.title.trim().toLowerCase() && a.start === b.start && a.end === b.end) continue;
       const aStart = timeMins(a.start), aEnd = timeMins(a.end);
       const bStart = timeMins(b.start), bEnd = timeMins(b.end);
       if (aStart < bEnd && bStart < aEnd) {
