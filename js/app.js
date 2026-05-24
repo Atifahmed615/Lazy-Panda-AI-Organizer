@@ -1944,7 +1944,7 @@ TASKS: ${JSON.stringify(state.tasks.filter(t=>!isTaskComplete(t)))}
   try {
     const res = await geminiFetch({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: 300, temperature: 0.7 }
+      generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 1000, temperature: 0.7 }
     });
     const responseText = await res.text();
     const data = JSON.parse(responseText);
@@ -2886,8 +2886,8 @@ function testNotification() {
   }
   new Notification('Lazy Panda 🐼', {
     body: 'Notifications are working! You\'ll be reminded before class.',
-    icon: './icon.svg',
-    badge: './icon.svg',
+    icon: './icon.png',
+    badge: './icon.png',
     tag: 'test'
   });
 }
@@ -2916,7 +2916,7 @@ function checkUpcomingNotifications() {
       notifiedEvents.add(notifKey);
       new Notification(`🐼 ${ev.title} in ${diff} min`, {
         body: `${fmt12(ev.start)} – ${fmt12(ev.end)}${ev.location ? ' · ' + ev.location : ''}`,
-        icon: './icon.svg',
+        icon: './icon.png',
         tag: notifKey,
         requireInteraction: false
       });

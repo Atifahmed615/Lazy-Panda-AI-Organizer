@@ -10,7 +10,7 @@ const APP_SHELL = [
   './index.html',
   './offline.html',
   './manifest.json',
-  './icon.svg',
+  './icon.png',
   './panda.svg',
   './css/style.css',
   './js/app.js'
