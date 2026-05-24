@@ -1960,8 +1960,21 @@ TASKS: ${JSON.stringify(state.tasks.filter(t=>!isTaskComplete(t)))}
     try {
       recs = JSON.parse(raw);
     } catch (parseErr) {
-      console.error("Failed to parse recommendations JSON:", parseErr);
-      return; // Stop execution if parse fails
+      console.warn("Initial JSON parse failed, attempting auto-repair...", parseErr);
+      try {
+        let s = raw;
+        const clean = s.replace(/\\"/g, '');
+        if ((clean.match(/"/g) || []).length % 2 !== 0) s += '"';
+        const openBraces = (s.match(/\{/g) || []).length - (s.match(/\}/g) || []).length;
+        for (let i = 0; i < Math.max(0, openBraces); i++) s += '}';
+        const openBrackets = (s.match(/\[/g) || []).length - (s.match(/\]/g) || []).length;
+        for (let i = 0; i < Math.max(0, openBrackets); i++) s += ']';
+        recs = JSON.parse(s);
+        console.log("Auto-repair successful:", recs);
+      } catch(e2) {
+        console.error("Auto-repair failed:", e2);
+        return; // Stop execution if repair fails
+      }
     }
     
     state.lastRecommendationDate = today;
