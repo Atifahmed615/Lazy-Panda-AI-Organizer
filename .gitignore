@@ -1,0 +1,17 @@
+# ── Draft & planning docs (not for public repo) ──────────────────────────────
+IMPLEMENTATION_PLAN.md
+New implementation_plan.md
+design_proposals.md
+
+# ── Personal health data (NEVER commit) ──────────────────────────────────────
+gym_plan_atif.md
+
+# ── Unused stray files ────────────────────────────────────────────────────────
+refactor.js
+
+# ── OS / editor noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+*~
