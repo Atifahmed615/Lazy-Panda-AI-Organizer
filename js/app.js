@@ -72,12 +72,17 @@ function loadState() {
       if (!Array.isArray(state.tasks)) state.tasks = [];
       // Migration: remove duplicate default events (e6/e8 were duplicates of e5/e7 with recurring:'weekends')
       const _dedupSeen = new Set();
+      const _beforeDedup = state.events.length;
       state.events = state.events.filter(ev => {
         const key = `${ev.title}|${ev.start}|${ev.end}|${ev.recurring}`;
         if (_dedupSeen.has(key)) return false;
         _dedupSeen.add(key);
         return true;
       });
+      // Persist the cleaned state back to localStorage immediately
+      if (state.events.length !== _beforeDedup) {
+        try { localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+      }
     } else {
       state.events = defaultEvents();
       state.tasks = defaultTasks();
@@ -2960,6 +2965,8 @@ function detectConflicts(dateStr, dayOfWeek) {
   for (let i = 0; i < evs.length; i++) {
     for (let j = i + 1; j < evs.length; j++) {
       const a = evs[i], b = evs[j];
+      // Skip exact duplicates (same title + same time = duplicate data, not a real conflict)
+      if (a.title === b.title && a.start === b.start && a.end === b.end) continue;
       const aStart = timeMins(a.start), aEnd = timeMins(a.end);
       const bStart = timeMins(b.start), bEnd = timeMins(b.end);
       if (aStart < bEnd && bStart < aEnd) {
