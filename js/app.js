@@ -71,13 +71,26 @@ function loadState() {
       if (!Array.isArray(state.events)) state.events = [];
       if (!Array.isArray(state.tasks)) state.tasks = [];
       // Migration: remove duplicate events.
-      // Pass 1 — prefer recurring events: sort so recurring ones come first,
-      //           then deduplicate by title+start+end (ignoring recurring value).
-      //           This removes 'none' one-off copies of classes already covered by a recurrence rule.
-      // Pass 2 — remove exact same-id dupes just in case.
+      // Sort: recurring events first (they are the canonical source of truth).
+      // Then remove any event — regardless of title — that shares start+end with a
+      // recurring event and has recurring:'none'. This catches AI-added one-offs like
+      // "CS5137 Machine Learning" that duplicate a recurring "Machine Learning" entry.
+      // Finally, deduplicate remaining events by exact title+start+end.
       const _beforeDedup = state.events.length;
       const _recurringRank = r => (r && r !== 'none') ? 0 : 1;
       state.events.sort((a, b) => _recurringRank(a.recurring) - _recurringRank(b.recurring));
+      // Build set of start|end times covered by recurring events
+      const _recurringSlots = new Set(
+        state.events
+          .filter(ev => ev.recurring && ev.recurring !== 'none')
+          .map(ev => `${ev.start}|${ev.end}`)
+      );
+      // Remove one-off events at the same time slot as a recurring event
+      state.events = state.events.filter(ev => {
+        if ((!ev.recurring || ev.recurring === 'none') && _recurringSlots.has(`${ev.start}|${ev.end}`)) return false;
+        return true;
+      });
+      // Deduplicate remaining events by title+start+end
       const _dedupSeen = new Set();
       state.events = state.events.filter(ev => {
         const key = `${ev.title.trim().toLowerCase()}|${ev.start}|${ev.end}`;
@@ -85,7 +98,7 @@ function loadState() {
         _dedupSeen.add(key);
         return true;
       });
-      // Persist the cleaned state back to localStorage immediately
+      // Persist cleaned state immediately
       if (state.events.length !== _beforeDedup) {
         try { localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
       }
@@ -1685,6 +1698,9 @@ ${allEvs.map(e=>`- [ID:${e.id}] ${e.title} | ${e.date} | ${fmt12(e.start)}–${f
 PENDING TASKS:
 ${pendingTasks.length ? pendingTasks.map(t=>`- [ID:${t.id}] ${t.name} | Due: ${t.due} | ${t.priority} priority`).join('\n') : 'No pending tasks'}
 
+DETECTED SCHEDULE CONFLICTS (pre-computed — do NOT contradict these):
+${(() => { try { const c = detectAllConflicts(); return c.length ? c.map(x=>`- ${x.date}: "${x.a.title}" (${fmt12(x.a.start)}–${fmt12(x.a.end)}) conflicts with "${x.b.title}" (${fmt12(x.b.start)}–${fmt12(x.b.end)})`).join('\n') : 'None'; } catch(e) { return 'None'; } })()}
+
 TIME RESOLUTION RULES (apply these before creating events):
 - "morning" → 09:00–10:00
 - "afternoon" → 14:00–15:00
@@ -1755,46 +1771,74 @@ function removeTyping() {
 }
 
 function parseAndExecuteActions(text) {
-  const actionRegex = /ACTION:(\{.*?\})/gs;
-  let match; let results = [];
+  const results = [];
   let cleanText = text;
+  const PREFIX = 'ACTION:';
 
-  while ((match = actionRegex.exec(text)) !== null) {
-    try {
-      const action = JSON.parse(match[1]);
-      cleanText = cleanText.replace(match[0], '').trim();
-      let result = '';
+  // Extract JSON by counting braces — handles nested objects correctly.
+  // Regex .*? stops at the first } which breaks nested {"data":{...}} payloads.
+  let searchStart = 0;
+  while (true) {
+    const idx = cleanText.indexOf(PREFIX, searchStart);
+    if (idx === -1) break;
 
-      if (action.type === 'create_event') {
-        const ev = { recurring:'none', recurringEndDate:'', color:'', ...action.data, id: 'e'+Date.now()+Math.random() };
-        state.events.push(ev);
-        result = `Event "${ev.title}" added on ${ev.date} at ${fmt12(ev.start)}`;
+    const jsonStart = idx + PREFIX.length;
+    if (cleanText[jsonStart] !== '{') { searchStart = idx + 1; continue; }
+
+    let depth = 0, jsonEnd = -1;
+    for (let i = jsonStart; i < cleanText.length; i++) {
+      if (cleanText[i] === '{') depth++;
+      else if (cleanText[i] === '}') { depth--; if (depth === 0) { jsonEnd = i; break; } }
+    }
+    if (jsonEnd === -1) break; // malformed — stop
+
+    const rawBlock = cleanText.slice(idx, jsonEnd + 1); // "ACTION:{...}"
+    const jsonStr  = cleanText.slice(jsonStart, jsonEnd + 1);
+
+    let action;
+    try { action = JSON.parse(jsonStr); } catch(e) {
+      console.error('Action JSON parse error:', e, jsonStr.substring(0, 120));
+      // Still remove the raw block from the bubble so user doesn't see it
+      cleanText = cleanText.slice(0, idx) + cleanText.slice(jsonEnd + 1);
+      continue;
+    }
+
+    // Remove the ACTION block from displayed text
+    cleanText = (cleanText.slice(0, idx) + cleanText.slice(jsonEnd + 1)).trim();
+
+    let result = '';
+    if (action.type === 'create_event') {
+      const ev = { recurring:'none', recurringEndDate:'', color:'', ...action.data, id: 'e'+Date.now()+Math.random() };
+      state.events.push(ev);
+      result = `Event "${ev.title}" added on ${ev.date} at ${fmt12(ev.start)}`;
+      saveState(); render();
+    } else if (action.type === 'create_task') {
+      const task = { subtasks: [], recurring: 'none', ...action.data, id: 't'+Date.now()+Math.random(), done: false, doneDates: [] };
+      task.recurringDay = task.recurringDay ?? new Date((task.due || todayStr()) + 'T12:00:00').getDay();
+      state.tasks.push(task);
+      result = `Task "${task.name}" added (due ${task.due})`;
+      saveState(); render();
+    } else if (action.type === 'delete_event') {
+      const ev = state.events.find(e => e.id === action.data.id);
+      if (ev) {
+        state.events = state.events.filter(e => e.id !== action.data.id);
+        result = `Removed "${ev.title}"`;
         saveState(); render();
-      } else if (action.type === 'create_task') {
-        const task = { subtasks: [], recurring: 'none', ...action.data, id: 't'+Date.now()+Math.random(), done: false, doneDates: [] };
-        task.recurringDay = task.recurringDay ?? new Date((task.due || todayStr()) + 'T12:00:00').getDay();
-        state.tasks.push(task);
-        result = `Task "${task.name}" added (due ${task.due})`;
-        saveState(); render();
-      } else if (action.type === 'delete_event') {
-        const ev = state.events.find(e=>e.id===action.data.id);
-        if (ev) {
-          state.events = state.events.filter(e=>e.id!==action.data.id);
-          result = `Removed "${ev.title}"`;
-          saveState(); render();
-        }
-      } else if (action.type === 'delete_task') {
-        const task = state.tasks.find(t=>t.id===action.data.id);
-        if (task) {
-          state.tasks = state.tasks.filter(t=>t.id!==action.data.id);
-          result = `Removed task "${task.name}"`;
-          saveState(); render();
-        }
+      } else {
+        console.warn('delete_event: no event found with id', action.data.id);
       }
-      if (result) results.push(result);
-    } catch(e) { console.error('Action parse error:', e); }
+    } else if (action.type === 'delete_task') {
+      const task = state.tasks.find(t => t.id === action.data.id);
+      if (task) {
+        state.tasks = state.tasks.filter(t => t.id !== action.data.id);
+        result = `Removed task "${task.name}"`;
+        saveState(); render();
+      }
+    }
+    if (result) results.push(result);
+    // Don't advance searchStart — indices shifted after splice
   }
-  return { cleanText, results };
+  return { cleanText: cleanText.trim(), results };
 }
 
 // ══════════════════════════════════════════════
