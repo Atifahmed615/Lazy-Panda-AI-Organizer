@@ -1,0 +1,19 @@
+{
+  "name": "Lazy Panda",
+  "short_name": "Lazy Panda",
+  "description": "AI-powered academic scheduler",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#7c6ff7",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

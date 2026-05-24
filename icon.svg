@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="115" fill="#7c6ff7"/>
+
+  <!-- Ears (outer) -->
+  <circle cx="118" cy="118" r="90" fill="#1a1a2e"/>
+  <circle cx="394" cy="118" r="90" fill="#1a1a2e"/>
+  <!-- Ears (inner) -->
+  <circle cx="118" cy="118" r="52" fill="#3a3a5c"/>
+  <circle cx="394" cy="118" r="52" fill="#3a3a5c"/>
+
+  <!-- Face -->
+  <circle cx="256" cy="300" r="195" fill="#f0f0f5"/>
+
+  <!-- Eye patches -->
+  <ellipse cx="178" cy="262" rx="68" ry="75" fill="#1a1a2e"/>
+  <ellipse cx="334" cy="262" rx="68" ry="75" fill="#1a1a2e"/>
+
+  <!-- Eyes (white) -->
+  <circle cx="178" cy="268" r="34" fill="white"/>
+  <circle cx="334" cy="268" r="34" fill="white"/>
+
+  <!-- Pupils -->
+  <circle cx="192" cy="258" r="16" fill="#1a1a2e"/>
+  <circle cx="348" cy="258" r="16" fill="#1a1a2e"/>
+
+  <!-- Eye shine -->
+  <circle cx="198" cy="252" r="6" fill="white"/>
+  <circle cx="354" cy="252" r="6" fill="white"/>
+
+  <!-- Nose -->
+  <ellipse cx="256" cy="338" rx="32" ry="22" fill="#c0b0d8"/>
+
+  <!-- Mouth -->
+  <path d="M220 365 Q256 400 292 365" stroke="#c0b0d8" stroke-width="10" fill="none" stroke-linecap="round"/>
+</svg>
