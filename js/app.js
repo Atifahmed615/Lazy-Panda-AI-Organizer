@@ -37,10 +37,9 @@ function defaultEvents() {
     { id:'e2', title:'Mathematics for AI', category:'class', date: nextDay(2), start:'18:00', end:'21:00', location:'NED CIS Department', recurring:'weekly' },
     { id:'e3', title:'Introduction to AI', category:'class', date: nextDay(3), start:'18:00', end:'21:00', location:'NED CIS Department', recurring:'weekly' },
     { id:'e4', title:'Understanding Holy Quran 1', category:'class', date: nextDay(4), start:'18:00', end:'21:00', location:'NED Auditorium', recurring:'weekly' },
-    { id:'e5', title:'AI-Driven Dev & Claude Code', category:'class', date: nextDay(5), start:'20:00', end:'22:00', location:'Online', recurring:'weekends' },
-    { id:'e6', title:'AI-Driven Dev & Claude Code', category:'class', date: nextDay(0), start:'20:00', end:'22:00', location:'Online', recurring:'weekends' },
+    { id:'e5', title:'AI-Driven Dev & Claude Code', category:'class', date: nextDay(5), start:'20:00', end:'22:00', location:'Online', recurring:'weekly' },
+    { id:'e6', title:'AI-Driven Dev & Claude Code', category:'class', date: nextDay(6), start:'20:00', end:'22:00', location:'Online', recurring:'weekends' },
     { id:'e7', title:'PGD: Machine Learning', category:'class', date: nextDay(6), start:'11:00', end:'13:00', location:'NED Textile Department', recurring:'weekends' },
-    { id:'e8', title:'PGD: Machine Learning', category:'class', date: nextDay(0), start:'11:00', end:'13:00', location:'NED Textile Department', recurring:'weekends' },
     { id:'e9', title:'CAIPP', category:'class', date: nextDay(6), start:'14:00', end:'18:00', location:'PNEC Computer Science Dept', recurring:'weekly' },
   ];
 }
@@ -71,6 +70,14 @@ function loadState() {
       state = { ...state, ...JSON.parse(saved) };
       if (!Array.isArray(state.events)) state.events = [];
       if (!Array.isArray(state.tasks)) state.tasks = [];
+      // Migration: remove duplicate default events (e6/e8 were duplicates of e5/e7 with recurring:'weekends')
+      const _dedupSeen = new Set();
+      state.events = state.events.filter(ev => {
+        const key = `${ev.title}|${ev.start}|${ev.end}|${ev.recurring}`;
+        if (_dedupSeen.has(key)) return false;
+        _dedupSeen.add(key);
+        return true;
+      });
     } else {
       state.events = defaultEvents();
       state.tasks = defaultTasks();
