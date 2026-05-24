@@ -1954,13 +1954,11 @@ TASKS: ${JSON.stringify(state.tasks.filter(t=>!isTaskComplete(t)))}
     raw = raw.replace(/```json/g, '').replace(/```/g, '').trim();
     // Replace all literal newlines with spaces to prevent "Unterminated string" JSON parse errors
     raw = raw.replace(/[\n\r]/g, ' ');
-    console.log("Raw AI Recommendations payload:", raw);
     
     let recs;
     try {
       recs = JSON.parse(raw);
     } catch (parseErr) {
-      console.warn("Initial JSON parse failed, attempting auto-repair...", parseErr);
       try {
         let s = raw;
         const clean = s.replace(/\\"/g, '');
@@ -1970,10 +1968,8 @@ TASKS: ${JSON.stringify(state.tasks.filter(t=>!isTaskComplete(t)))}
         const openBrackets = (s.match(/\[/g) || []).length - (s.match(/\]/g) || []).length;
         for (let i = 0; i < Math.max(0, openBrackets); i++) s += ']';
         recs = JSON.parse(s);
-        console.log("Auto-repair successful:", recs);
       } catch(e2) {
-        console.error("Auto-repair failed:", e2);
-        return; // Stop execution if repair fails
+        return; // Stop execution silently if repair fails
       }
     }
     
