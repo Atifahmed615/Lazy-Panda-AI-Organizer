@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🐼 Lazy Panda — AI Scheduler
+# 🐼 Lazy Panda — AI Organizer
 
 **A premium, AI-powered scheduling assistant for students**
 

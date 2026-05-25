@@ -954,7 +954,7 @@ function exportIcal() {
   const ics = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Lazy Panda//AI Scheduler//EN',
+    'PRODID:-//Lazy Panda//AI Organizer//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     'X-WR-CALNAME:Lazy Panda Schedule',
