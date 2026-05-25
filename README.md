@@ -21,12 +21,16 @@
 - Live countdown timer to your next class
 - Today's full schedule on a visual timeline
 - Weekly workload tracker (scheduled hours vs. task load)
-- AI-generated conflict detection & smart resolution suggestions
+- AI-generated conflict detection with configurable **travel buffer**
+- Smart resolution suggestions powered by Gemini
 
 ### 🤖 AI Assistant (Gemini 2.5 Flash)
 - Add, edit, and delete events and tasks by chatting naturally
 - Understands relative time: *"tomorrow at 9 PM"*, *"after ML class"*, *"next Monday"*
 - Detects scheduling conflicts and proposes fixes
+- **AI session memory** — remembers your last actions across the conversation
+- **AI-settable reminders** — ask the AI to remind you at a specific time
+- **Multi-action parsing** — one message can create multiple events/tasks at once
 - Offline fallback using Gemini Nano (Chrome only) when no API key is set
 - Voice input support via Web Speech API
 
@@ -65,9 +69,11 @@
 ### ⚙️ Settings & Sync
 - 4 themes: Dark, AMOLED (pure black), Light, High Contrast
 - Custom accent colour picker
+- Configurable **travel buffer** (0–60 min) for conflict detection
 - Cloud sync via Supabase (bring-your-own instance)
 - WhatsApp reminders (requires relay server)
-- Browser push notifications before class starts
+- Browser push notifications with localStorage persistence (survives page refresh)
+- Task notifications at 8 AM daily
 - Export / Import data (JSON backup)
 
 ---
@@ -82,6 +88,7 @@ Lazy Panda uses a **Glassmorphism + Bento Box** design system:
 - Spring-physics modal and chat animations (`cubic-bezier(0.34, 1.56, 0.64, 1)`)
 - Custom panda mascot with glowing purple AI eyes
 - Mobile-first with a fixed glass bottom nav bar and slide-up chat overlay
+- **Offline banner** — amber notice when network is lost, auto-dismisses on reconnect
 
 ---
 
@@ -119,6 +126,8 @@ The AI requires a **free** Google Gemini API key — no credit card needed.
 | *"Check my schedule for conflicts"* | Runs conflict analysis |
 | *"Create a task: Review backprop notes, due today, high priority"* | Creates the task |
 | *"What free time do I have today?"* | Calculates gaps |
+| *"Remind me 30 minutes before my ML class"* | Sets a push notification reminder |
+| *"Add a study session and a gym session for tomorrow"* | Creates both in one message |
 
 ---
 
@@ -126,16 +135,22 @@ The AI requires a **free** Google Gemini API key — no credit card needed.
 
 ```
 lazy-panda/
-├── index.html          # Entire frontend — single HTML file
+├── index.html          # Frontend shell — structure, modals, nav
 ├── css/
 │   └── style.css       # All styles — glass system, bento grid, themes
 ├── js/
-│   └── app.js          # All logic — render, AI, CRUD, gym, sync
+│   ├── state.js        # State, constants, helpers, conflict detection
+│   ├── render.js       # All render functions, modal & view management
+│   ├── ai.js           # Gemini chat, voice, notes, optimizer, reminders
+│   └── app.js          # Event/task CRUD, settings, notifications, init
 ├── manifest.json       # PWA manifest (name, icons, display mode)
 ├── sw.js               # Service worker (offline caching + auto-update)
-├── icon.svg            # App icon (panda mascot)
+├── icon.png            # App icon (panda mascot)
+├── offline.html        # Fallback page when fully offline
 └── README.md           # This file
 ```
+
+> Scripts load in dependency order: `state.js` → `render.js` → `ai.js` → `app.js`
 
 ---
 

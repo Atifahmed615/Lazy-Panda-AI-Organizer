@@ -17,7 +17,7 @@
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" href="icon.png"> 
 <script>
-  window.LAZY_PANDA_BUILD = '2026.05.24.3';
+  window.LAZY_PANDA_BUILD = '2026.05.25.1-habits';
   window.__lpSwRegistration = null;
   window.__lpSwStatus = { text: 'Service worker not checked yet', color: 'var(--text3)' };
   window.__setLpSwStatus = function(text, color) {
@@ -68,33 +68,20 @@
 </head>
 <body>
 
+<!-- OFFLINE BANNER — shown automatically when network is lost -->
+<div id="offline-banner" class="offline-banner hidden" role="status" aria-live="polite">
+  <span>📡</span>
+  <span>You're offline — AI features unavailable. Your schedule is still accessible.</span>
+  <button onclick="document.getElementById('offline-banner').classList.add('hidden')" aria-label="Dismiss">✕</button>
+</div>
+
 <div class="app" id="app">
 
   <!-- SIDEBAR (desktop) -->
   <aside class="sidebar">
     <div class="logo">
       <div class="logo-icon">
-        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <!-- ears -->
-          <circle cx="4.5" cy="4.5" r="3.5" fill="#1a1a2e"/>
-          <circle cx="17.5" cy="4.5" r="3.5" fill="#1a1a2e"/>
-          <circle cx="4.5" cy="4.5" r="1.8" fill="#3a3a5c"/>
-          <circle cx="17.5" cy="4.5" r="1.8" fill="#3a3a5c"/>
-          <!-- face -->
-          <circle cx="11" cy="13" r="8.5" fill="#f0f0f5"/>
-          <!-- eye patches -->
-          <ellipse cx="7.5" cy="11" rx="2.6" ry="2.8" fill="#1a1a2e"/>
-          <ellipse cx="14.5" cy="11" rx="2.6" ry="2.8" fill="#1a1a2e"/>
-          <!-- eyes -->
-          <circle cx="7.5" cy="11.2" r="1.2" fill="white"/>
-          <circle cx="14.5" cy="11.2" r="1.2" fill="white"/>
-          <circle cx="8" cy="10.8" r="0.55" fill="#1a1a2e"/>
-          <circle cx="15" cy="10.8" r="0.55" fill="#1a1a2e"/>
-          <!-- nose -->
-          <ellipse cx="11" cy="14.5" rx="1.3" ry="0.9" fill="#b0b0c8"/>
-          <!-- mouth -->
-          <path d="M9.5 15.8 Q11 17 12.5 15.8" stroke="#b0b0c8" stroke-width="0.7" fill="none" stroke-linecap="round"/>
-        </svg>
+        <img src="panda.svg" alt="Lazy Panda" style="width:100%;height:100%;object-fit:contain;display:block;">
       </div>
       <div>
         <div class="logo-text">Lazy Panda</div>
@@ -123,6 +110,11 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       </span> Deadlines
     </div>
+    <div class="nav-item" id="nav-habits" onclick="showView('habits')" role="button" tabindex="0" aria-label="Navigate to Habits">
+      <span class="nav-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z"/><path d="M9 12l2 2 4-4"/></svg>
+      </span> Habits <span class="nav-badge" id="habit-badge" style="display:none;">0</span>
+    </div>
     <div class="nav-item" id="nav-focus" onclick="showView('focus')" role="button" tabindex="0" aria-label="Navigate to Focus">
       <span class="nav-icon">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
@@ -134,11 +126,6 @@
       </span> Stats
     </div>
 
-    <div class="nav-item" id="nav-gym" onclick="showView('gym')" role="button" tabindex="0" aria-label="Navigate to Gym Plan">
-      <span class="nav-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5h11"/><path d="M6.5 17.5h11"/><path d="M3 9.5h2v5H3z"/><path d="M19 9.5h2v5h-2z"/><path d="M2 12h1"/><path d="M21 12h1"/></svg>
-      </span> Gym Plan
-    </div>
 
     <div class="nav-section" style="margin-top:12px;">System</div>
     <div class="nav-item" id="nav-settings" onclick="showView('settings')" role="button" tabindex="0" aria-label="Navigate to Settings">
@@ -185,6 +172,10 @@
           <div class="bento-item bento-workload" id="workload-widget-wrap"></div>
           <div class="bento-item bento-ai" id="ai-recommendations-wrap"></div>
         </div>
+
+        <!-- Habit Streaks Widget (Dashboard) -->
+        <div id="habits-widget-wrap"></div>
+
 
         <!-- Bottom Row -->
         <div class="bento-row-bottom">
@@ -286,6 +277,19 @@
       </div>
     </div>
 
+    <!-- HABITS VIEW -->
+    <div id="view-habits" class="hidden">
+      <div class="section-header">
+        <span class="section-title">HABITS & STREAKS</span>
+        <button class="btn-add" onclick="showAddHabitModal()">＋ Add Habit</button>
+      </div>
+      <div id="habits-today-wrap"></div>
+      <div class="section-header" style="margin-top:6px;">
+        <span class="section-title" style="font-size:11px;">ALL HABITS</span>
+      </div>
+      <div id="habits-all-wrap"></div>
+    </div>
+
     <!-- FOCUS VIEW -->
     <div id="view-focus" class="hidden">
       <div class="pomodoro-container">
@@ -332,11 +336,6 @@
       <div id="stats-dashboard" class="stats-grid"></div>
     </div>
 
-    <!-- GYM PLAN VIEW -->
-    <div id="view-gym" class="hidden">
-      <div id="gym-view-content"></div>
-    </div>
-
     <!-- SHARED SCHEDULE VIEW (Read-Only) -->
     <div id="view-shared" class="hidden">
       <div class="section-header">
@@ -372,7 +371,12 @@
             <label class="form-label">Weekly Hour Limit</label>
             <input class="form-input" type="number" min="10" max="120" step="1" id="settings-weekly-limit" onchange="changeWeeklyHourLimit()">
           </div>
+          <div>
+            <label class="form-label">Travel Buffer (mins)</label>
+            <input class="form-input" type="number" min="0" max="60" step="5" id="settings-travel-buffer" onchange="changeTravelBuffer()" title="Extra time added after each event before the next can start — used for conflict detection">
+          </div>
         </div>
+        <div class="settings-desc" style="margin-top:6px;">Travel buffer adds breathing room between back-to-back events. Set to 0 to disable.</div>
       </div>
       <div class="settings-section">
         <div class="settings-label">🔑 Gemini API Key</div>
@@ -537,7 +541,7 @@
     <div class="chat-panel" style="flex:1;display:flex;flex-direction:column;width:100%;">
 
       <div class="chat-header">
-        <div class="chat-avatar">🐼</div>
+        <div class="chat-avatar"><img src="panda.svg" alt="Lazy Panda" style="width:100%;height:100%;object-fit:contain;display:block;"></div>
         <div class="chat-header-text">
           <div class="chat-name">Lazy Panda 🐼</div>
           <div class="chat-status" id="ai-chat-status">Ready</div>
@@ -557,6 +561,7 @@
         <div class="chip" onclick="sendQuick('Check my schedule for any conflicts or overlapping events')">⚡ Check conflicts</div>
         <div class="chip" onclick="sendQuick('What free time do I have today?')">Free time today</div>
         <div class="chip" onclick="sendQuick('Create a task: Review ML notes, due today, high priority')">Add task</div>
+        <div class="chip" onclick="sendQuick('How are my habits going? Show my current streaks.')">🔥 Habit streaks</div>
       </div>
 
       <div class="chat-input-area">
@@ -606,12 +611,12 @@
       <div>Due</div>
     </div>
 
-    <div class="mobile-nav-item" id="mnav-focus" onclick="showView('focus')" role="button" tabindex="0" aria-label="Navigate to Focus">
+    <div class="mobile-nav-item" id="mnav-habits" onclick="showView('habits')" role="button" tabindex="0" aria-label="Navigate to Habits">
       <div class="mobile-nav-icon">
-        <svg class="nav-svg nav-svg-outline" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-        <svg class="nav-svg nav-svg-filled" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke-width="0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="5" fill="var(--accent2)"/><circle cx="12" cy="12" r="2" fill="white"/></svg>
+        <svg class="nav-svg nav-svg-outline" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z"/><path d="M9 12l2 2 4-4"/></svg>
+        <svg class="nav-svg nav-svg-filled" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke-width="0"><path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z"/><path d="M9 12l2 2 4-4" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
-      <div>Focus</div>
+      <div>Habits</div>
     </div>
 
     <!-- MORE BUTTON -->
@@ -633,13 +638,13 @@
     <button class="mobile-drawer-close" onclick="closeMobileDrawer()" aria-label="Close">✕</button>
   </div>
   <div class="mobile-drawer-content">
-    <div class="mobile-drawer-item" onclick="showView('gym')">
+    <div class="mobile-drawer-item" onclick="showView('focus')">
       <div class="mobile-drawer-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5h11"/><path d="M6.5 17.5h11"/><path d="M3 9.5h2v5H3z"/><path d="M19 9.5h2v5h-2z"/><path d="M2 12h1"/><path d="M21 12h1"/></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
       </div>
       <div>
-        <div class="mobile-drawer-item-title">Gym Plan</div>
-        <div class="mobile-drawer-item-desc">102 kg → 80 kg fat loss plan</div>
+        <div class="mobile-drawer-item-title">Focus</div>
+        <div class="mobile-drawer-item-desc">Pomodoro timer</div>
       </div>
     </div>
     <div class="mobile-drawer-item" onclick="showView('stats')">
@@ -805,6 +810,69 @@
   </div>
 </div>
 
+<!-- ADD/EDIT HABIT MODAL -->
+<div class="modal-overlay hidden" id="habit-modal" role="dialog" aria-modal="true" aria-labelledby="habit-modal-title">
+  <div class="modal">
+    <div class="modal-title" id="habit-modal-title">Add Habit</div>
+    <div class="form-group form-row">
+      <div style="flex:1;">
+        <label class="form-label">Habit Name</label>
+        <input class="form-input" id="hb-name" placeholder="e.g. Meditate">
+      </div>
+      <div style="flex:0 0 80px;">
+        <label class="form-label">Emoji</label>
+        <input class="form-input" id="hb-emoji" placeholder="⭐" maxlength="4" style="text-align:center;">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Type</label>
+      <select class="form-input" id="hb-type" onchange="updateHabitTypeUI()">
+        <option value="checkoff">Check-off (done / not done)</option>
+        <option value="counter">Counter (e.g. 8 glasses of water)</option>
+      </select>
+    </div>
+    <div class="form-group form-row" id="hb-counter-row" style="display:none;">
+      <div style="flex:1;">
+        <label class="form-label">Daily Target</label>
+        <input class="form-input" type="number" min="1" max="999" id="hb-target" value="1">
+      </div>
+      <div style="flex:1;">
+        <label class="form-label">Unit (optional)</label>
+        <input class="form-input" id="hb-unit" placeholder="glasses, pages, minutes">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Frequency</label>
+      <select class="form-input" id="hb-frequency" onchange="updateHabitFrequencyUI()">
+        <option value="daily">Every day</option>
+        <option value="weekly">Specific weekdays</option>
+      </select>
+    </div>
+    <div class="form-group" id="hb-weekdays-row" style="display:none;">
+      <label class="form-label">Pick days</label>
+      <div class="hb-weekday-picker" id="hb-weekday-picker"></div>
+    </div>
+    <div class="form-group form-row">
+      <div style="flex:1;">
+        <label class="form-label">Color</label>
+        <div class="hb-color-picker" id="hb-color-picker"></div>
+      </div>
+      <div style="flex:0 0 140px;">
+        <label class="form-label">Daily Reminder</label>
+        <input class="form-input" type="time" id="hb-reminder">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px;">Optional. Needs notifications enabled.</div>
+      </div>
+    </div>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="btn-cancel" id="hb-delete-btn" style="background:var(--coral-bg);color:var(--coral);display:none;" onclick="deleteHabitFromModal()">Delete</button>
+      <div style="display:flex;gap:8px;margin-left:auto;">
+        <button class="btn-cancel" onclick="closeModal('habit-modal')">Cancel</button>
+        <button class="btn-save" onclick="saveHabit()">Save Habit</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Academic modals removed (attendance, grades, notes). -->
 
 <!-- KEYBOARD SHORTCUTS MODAL -->
@@ -838,7 +906,13 @@
 
   <!-- Supabase JS Client (loaded dynamically if needed or just kept available) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  
+
+  <!-- App scripts — Load order matters: state → render → ai → app -->
+  <script src="js/state.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/ai.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
+  
+  <!-- Load order matters: state → render → ai �
