@@ -70,7 +70,7 @@
 - 4 themes: Dark, AMOLED (pure black), Light, High Contrast
 - Custom accent colour picker
 - Configurable **travel buffer** (0–60 min) for conflict detection
-- Cloud sync via Supabase (bring-your-own instance)
+- Cloud sync via Google Firebase (Firestore + Google SSO)
 - WhatsApp reminders (requires relay server)
 - Browser push notifications with localStorage persistence (survives page refresh)
 - Task notifications at 8 AM daily
@@ -162,7 +162,7 @@ lazy-panda/
 | Fonts | DM Sans + DM Mono (Google Fonts) |
 | AI | Google Gemini 2.5 Flash API |
 | Offline AI | Gemini Nano (Chrome AI Origin Trial) |
-| Cloud Sync | Supabase (optional, user-configured) |
+| Cloud Sync | Firebase Firestore & Google Auth |
 | Calendar | Google Calendar API (OAuth2) |
 | Storage | Browser `localStorage` |
 | Hosting | GitHub Pages |

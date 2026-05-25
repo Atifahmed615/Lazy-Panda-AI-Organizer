@@ -555,7 +555,7 @@ function showView(v, options) {
     updateGCalUI();
     updateWAUI();
     updateAppVersionUI();
-    if (typeof updateSupabaseUI === 'function') updateSupabaseUI();
+
   }
   if(v==='schedule') { requestAnimationFrame(() => { renderCalendar(); }); }
   if(v==='deadlines') renderDeadlines();

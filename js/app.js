@@ -1,4 +1,4 @@
-﻿// ══════════════════════════════════════════════
+// ══════════════════════════════════════════════
 //  app.js — Event handlers, settings, navigation, init
 //  Load order: 4th (depends on state.js, render.js, ai.js)
 // ══════════════════════════════════════════════
@@ -1744,8 +1744,6 @@ let gCalAccessToken = null;
 
 function updateGCalUI() {
   const connected = !!gCalAccessToken;
-  const clientIdEl = document.getElementById('gcal-client-id');
-  if (clientIdEl && state.gcalClientId) clientIdEl.value = state.gcalClientId;
   document.getElementById('gcal-connect-btn').style.display = connected ? 'none' : '';
   document.getElementById('gcal-sync-btn').style.display = connected ? '' : 'none';
   document.getElementById('gcal-import-btn').style.display = connected ? '' : 'none';
@@ -1778,13 +1776,7 @@ async function loadGISLibrary() {
 }
 
 async function connectGoogleCalendar() {
-  const clientId = document.getElementById('gcal-client-id')?.value.trim();
-  if (!clientId) {
-    setGCalStatus('⚠️ Please enter your Google Client ID first.', 'var(--amber)');
-    return;
-  }
-  state.gcalClientId = clientId;
-  saveState();
+  const clientId = "428339420555-1mvluo2fb8mo5cntrl0rrrbk8pfqn1jh.apps.googleusercontent.com";
   setGCalStatus('Loading Google Sign-In…', 'var(--text3)');
   try {
     await loadGISLibrary();
@@ -2049,160 +2041,141 @@ function exitSharedView() {
 }
 
 // ══════════════════════════════════════════════
-//  PHASE 6.4 — CLOUD SYNC (SUPABASE)
+//  PHASE 6.4 — CLOUD SYNC (GOOGLE FIREBASE)
 // ══════════════════════════════════════════════
-let supabaseRealtimeSubscription = null;
+let firebaseUnsubscribe = null;
 let lastSyncTimestamp = 0;
 let syncInProgress = false;
 
-function updateSupabaseUI() {
-  const urlEl = document.getElementById('supabase-url');
-  const keyEl = document.getElementById('supabase-key');
-  const syncIdEl = document.getElementById('supabase-sync-id');
-  if (urlEl) urlEl.value = state.supabaseUrl || '';
-  if (keyEl) keyEl.value = state.supabaseKey || '';
-  if (syncIdEl) syncIdEl.value = state.supabaseSyncId || '';
+// TODO: Replace this placeholder config with an actual Firebase project configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyABHSM6EFseBSxqKMajA0OPEoQd81KkJDM",
+  authDomain: "gen-lang-client-0412969424.firebaseapp.com",
+  projectId: "gen-lang-client-0412969424",
+  storageBucket: "gen-lang-client-0412969424.firebasestorage.app",
+  messagingSenderId: "428339420555",
+  appId: "1:428339420555:web:8b040024cd3c039ca0638e",
+  measurementId: "G-R0DYVP159S"
+};
+
+// Initialize Firebase
+let firebaseApp, auth, db;
+try {
+  if (firebase.apps.length === 0) {
+    firebaseApp = firebase.initializeApp(firebaseConfig);
+  } else {
+    firebaseApp = firebase.app();
+  }
+  auth = firebase.auth();
+  db = firebase.firestore();
+} catch (e) {
+  console.error("Firebase init error:", e);
 }
 
-function generateSyncId() {
-  const id = 'sync-' + Date.now() + '-' + Math.random().toString(36).slice(2, 11);
-  state.supabaseSyncId = id;
-  const syncIdEl = document.getElementById('supabase-sync-id');
-  if (syncIdEl) syncIdEl.value = id;
-  saveState();
-}
-
-function saveSupabaseConfig() {
-  state.supabaseUrl = document.getElementById('supabase-url')?.value.trim() || '';
-  state.supabaseKey = document.getElementById('supabase-key')?.value.trim() || '';
-  state.supabaseSyncId = document.getElementById('supabase-sync-id')?.value.trim() || '';
+function updateFirebaseUI(user) {
+  const statusEl = document.getElementById('firebase-status');
+  const signinBtn = document.getElementById('fb-signin-btn');
+  const signoutBtn = document.getElementById('fb-signout-btn');
+  const syncBtn = document.getElementById('fb-sync-btn');
   
-  if (!state.supabaseUrl || !state.supabaseKey || !state.supabaseSyncId) {
-    const el = document.getElementById('supabase-status');
-    if (el) {
-      el.style.display = 'block';
-      el.style.color = 'var(--coral)';
-      el.textContent = '❌ Please fill in all fields.';
+  if (user) {
+    if (statusEl) {
+      statusEl.textContent = `Signed in as ${user.email}`;
+      statusEl.style.color = 'var(--green)';
     }
-    return;
+    if (signinBtn) signinBtn.style.display = 'none';
+    if (signoutBtn) signoutBtn.style.display = 'inline-block';
+    if (syncBtn) syncBtn.removeAttribute('disabled');
+  } else {
+    if (statusEl) {
+      statusEl.textContent = 'Not signed in.';
+      statusEl.style.color = 'var(--text3)';
+    }
+    if (signinBtn) signinBtn.style.display = 'inline-block';
+    if (signoutBtn) signoutBtn.style.display = 'none';
+    if (syncBtn) syncBtn.setAttribute('disabled', 'true');
   }
-  
-  saveState();
-  initializeCloudSync();
-  
-  const el = document.getElementById('supabase-status');
-  if (el) {
-    el.style.display = 'block';
-    el.style.color = 'var(--green)';
-    el.textContent = '✅ Cloud config saved. Real-time sync enabled.';
-  }
-  
-  // Auto-sync immediately
-  syncToCloud(true);
 }
 
-async function getSupabaseClient() {
-  if (!state.supabaseUrl || !state.supabaseKey) return null;
-  if (!window.supabase || !window.supabase.createClient) return null;
-  try {
-    return window.supabase.createClient(state.supabaseUrl, state.supabaseKey);
-  } catch(e) {
-    console.error('Failed to create Supabase client:', e);
-    return null;
-  }
+if (auth) {
+  auth.onAuthStateChanged(user => {
+    updateFirebaseUI(user);
+    if (user) {
+      setupRealtimeSyncListener(user.uid);
+      restoreFromCloud();
+    } else {
+      if (firebaseUnsubscribe) {
+        firebaseUnsubscribe();
+        firebaseUnsubscribe = null;
+      }
+    }
+  });
+}
+
+function signInWithGoogle() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).catch(e => {
+    console.error("Sign in failed", e);
+    const el = document.getElementById('firebase-status');
+    if (el) {
+      el.textContent = 'Sign in failed: ' + e.message;
+      el.style.color = 'var(--coral)';
+    }
+  });
+}
+
+function signOut() {
+  auth.signOut().then(() => {
+    updateFirebaseUI(null);
+  });
 }
 
 function initializeCloudSync() {
-  if (!state.supabaseUrl || !state.supabaseKey || !state.supabaseSyncId) return;
-  
-  // Unsubscribe from previous if any
-  if (supabaseRealtimeSubscription) {
-    supabaseRealtimeSubscription.unsubscribe();
-  }
-  
-  // Setup real-time listener
-  setupRealtimeSyncListener();
-  
-  // Register periodic background sync (if supported)
-  if ('serviceWorker' in navigator && 'periodicSync' in ServiceWorkerRegistration.prototype) {
-    navigator.serviceWorker.ready.then(reg => {
-      reg.periodicSync.register('auto-sync-cloud', { minInterval: 60 * 60 * 1000 }).catch(() => {
-        console.log('Periodic sync registration failed (may not be supported)');
-      });
-    }).catch(() => {
-      console.log('Service Worker not ready for periodic sync');
-    });
-  }
+  // No-op, Firebase handles this via onAuthStateChanged
 }
 
-async function setupRealtimeSyncListener() {
-  try {
-    const supabaseClient = await getSupabaseClient();
-    if (!supabaseClient) return;
-    
-    // Subscribe to changes on this sync ID
-    supabaseRealtimeSubscription = supabaseClient
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'lazy_panda_sync',
-        filter: `id=eq.${state.supabaseSyncId}`
-      }, payload => {
-        handleRemoteSync(payload);
-      })
-      .subscribe();
-  } catch(e) {
-    console.error('Failed to setup real-time sync listener:', e);
-  }
-}
-
-async function handleRemoteSync(payload) {
-  if (!payload.new || !payload.new.data) return;
+function setupRealtimeSyncListener(uid) {
+  if (firebaseUnsubscribe) firebaseUnsubscribe();
   
-  try {
-    const remoteData = JSON.parse(payload.new.data);
-    const remoteTimestamp = new Date(payload.new.updated_at).getTime();
-    
-    // Conflict resolution: Keep local if edited more recently
-    if (remoteTimestamp > lastSyncTimestamp) {
-      // Remote is newer, merge intelligently
-      mergeCloudData(remoteData);
-      lastSyncTimestamp = remoteTimestamp;
+  firebaseUnsubscribe = db.collection('users').doc(uid).onSnapshot(doc => {
+    if (doc.exists) {
+      handleRemoteSync(doc.data(), doc.metadata.hasPendingWrites);
     }
-  } catch(e) {
-    console.error('Error handling remote sync:', e);
+  }, err => {
+    console.error('Realtime sync error:', err);
+  });
+}
+
+function handleRemoteSync(cloudState, isLocal) {
+  if (isLocal) return;
+  
+  const remoteTimestamp = cloudState.updated_at || 0;
+  if (remoteTimestamp > lastSyncTimestamp) {
+    mergeCloudData(cloudState);
+    lastSyncTimestamp = remoteTimestamp;
   }
 }
 
-function mergeCloudData(remoteData) {
-  // Smart merge: prefer local newer data, cloud for missing items
-  if (remoteData.events && Array.isArray(remoteData.events)) {
-    remoteData.events.forEach(remoteEv => {
-      const idx = state.events.findIndex(e => e.id === remoteEv.id);
-      if (idx < 0) {
-        // New event from cloud
-        state.events.push(remoteEv);
-      }
-      // Don't overwrite local (local edits are newer)
+function mergeCloudData(cloudState) {
+  if (cloudState.events && Array.isArray(cloudState.events)) {
+    cloudState.events.forEach(cloudEv => {
+      const idx = state.events.findIndex(e => e.id === cloudEv.id);
+      if (idx < 0) state.events.push(cloudEv);
     });
   }
-  
-  if (remoteData.tasks && Array.isArray(remoteData.tasks)) {
-    remoteData.tasks.forEach(remoteTask => {
-      const idx = state.tasks.findIndex(t => t.id === remoteTask.id);
-      if (idx < 0) {
-        state.tasks.push(remoteTask);
-      }
+  if (cloudState.tasks && Array.isArray(cloudState.tasks)) {
+    cloudState.tasks.forEach(cloudTask => {
+      const idx = state.tasks.findIndex(t => t.id === cloudTask.id);
+      if (idx < 0) state.tasks.push(cloudTask);
     });
   }
-  
   saveState();
   render();
 }
 
 let syncTimeout = null;
 function autoSyncToCloud() {
-  if (!state.supabaseUrl || !state.supabaseKey || !state.supabaseSyncId) return;
+  if (!auth || !auth.currentUser) return;
   if (syncTimeout) clearTimeout(syncTimeout);
   syncTimeout = setTimeout(() => {
     syncToCloud(true);
@@ -2213,124 +2186,87 @@ async function syncToCloud(isAuto = false) {
   if (syncInProgress) return;
   syncInProgress = true;
   
-  const el = document.getElementById('supabase-status');
-  if (!state.supabaseUrl || !state.supabaseKey || !state.supabaseSyncId) {
+  const user = auth?.currentUser;
+  const el = document.getElementById('firebase-status');
+  
+  if (!user) {
     syncInProgress = false;
-    if (!isAuto && el) {
-      el.style.display = 'block';
-      el.style.color = 'var(--amber)';
-      el.textContent = '⚠️ Please configure cloud sync first.';
-    }
     return;
   }
+  
   if (!isAuto && el) {
-    el.style.display = 'block';
     el.style.color = 'var(--text3)';
-    el.textContent = '⏳ Syncing to cloud...';
+    el.textContent = `⏳ Syncing to cloud... (${user.email})`;
   }
+  
   try {
-    const supabaseClient = await getSupabaseClient();
-    if (!supabaseClient) throw new Error("Supabase client not available. Check your configuration.");
-    
     const payload = { ...state };
     delete payload.apiKey;
-    delete payload.supabaseKey;
+    const now = new Date().getTime();
+    payload.updated_at = now;
+    lastSyncTimestamp = now;
     
-    const now = new Date().toISOString();
-    lastSyncTimestamp = new Date(now).getTime();
-    
-    const { error } = await supabaseClient
-      .from('lazy_panda_sync')
-      .upsert({ 
-        id: state.supabaseSyncId, 
-        data: JSON.stringify(payload),
-        updated_at: now,
-        device_name: navigator.userAgent.substring(0, 100)
-      }, { onConflict: 'id' });
-
-    if (error) throw error;
+    await db.collection('users').doc(user.uid).set(payload, { merge: true });
     
     syncInProgress = false;
     if (!isAuto && el) {
       el.style.color = 'var(--green)';
-      el.textContent = '✅ Successfully synced to cloud!';
+      el.textContent = `✅ Synced to cloud (${user.email})`;
     }
   } catch(e) {
     syncInProgress = false;
     console.error('Sync error:', e);
     if (!isAuto && el) {
       el.style.color = 'var(--coral)';
-      el.textContent = '❌ Cloud sync failed: ' + (e.message || 'Unknown error');
+      el.textContent = '❌ Sync failed: ' + e.message;
     }
   }
 }
 
 async function restoreFromCloud() {
-  const el = document.getElementById('supabase-status');
-  if (!state.supabaseUrl || !state.supabaseKey || !state.supabaseSyncId) {
-    if (el) {
-      el.style.display = 'block';
-      el.style.color = 'var(--amber)';
-      el.textContent = '⚠️ Please configure cloud sync first.';
-    }
-    return;
-  }
-  if (!confirm('⚠️ This will merge cloud data with your local schedule. Continue?\n\n(New items from cloud will be added, existing local items are preserved.)')) return;
+  const user = auth?.currentUser;
+  const el = document.getElementById('firebase-status');
+  if (!user) return;
   
   if (el) {
-    el.style.display = 'block';
     el.style.color = 'var(--text3)';
-    el.textContent = '⏳ Restoring from cloud...';
+    el.textContent = `⏳ Restoring from cloud... (${user.email})`;
   }
+  
   try {
-    const supabaseClient = await getSupabaseClient();
-    if (!supabaseClient) throw new Error("Supabase client not available. Check your configuration.");
+    const doc = await db.collection('users').doc(user.uid).get();
+    if (!doc.exists) {
+      if (el) {
+        el.style.color = 'var(--text3)';
+        el.textContent = `Welcome! No cloud data found for ${user.email}.`;
+      }
+      return;
+    }
     
-    const { data, error } = await supabaseClient
-      .from('lazy_panda_sync')
-      .select('*')
-      .eq('id', state.supabaseSyncId)
-      .single();
-
-    if (error) throw error;
-    if (!data || !data.data) throw new Error("No data found for this Sync ID.");
+    const cloudState = doc.data();
+    lastSyncTimestamp = cloudState.updated_at || new Date().getTime();
     
-    const cloudState = JSON.parse(data.data);
-    lastSyncTimestamp = new Date(data.updated_at).getTime();
-    
-    // Preserve sensitive local data
     const localApiKey = state.apiKey;
     const localGcalClientId = state.gcalClientId;
     const localWaPhone = state.waPhone;
     
-    // Merge: cloud data fills gaps, local data is preserved for existing items
     if (cloudState.events && Array.isArray(cloudState.events)) {
       cloudState.events.forEach(cloudEv => {
         const idx = state.events.findIndex(e => e.id === cloudEv.id);
-        if (idx < 0) {
-          state.events.push(cloudEv);
-        }
+        if (idx < 0) state.events.push(cloudEv);
       });
     }
     
     if (cloudState.tasks && Array.isArray(cloudState.tasks)) {
       cloudState.tasks.forEach(cloudTask => {
         const idx = state.tasks.findIndex(t => t.id === cloudTask.id);
-        if (idx < 0) {
-          state.tasks.push(cloudTask);
-        }
+        if (idx < 0) state.tasks.push(cloudTask);
       });
     }
     
-    if (cloudState.grades && Array.isArray(cloudState.grades)) {
-      state.grades = cloudState.grades || [];
-    }
-
-    if (cloudState.attendance && Array.isArray(cloudState.attendance)) {
-      state.attendance = cloudState.attendance || [];
-    }
-
-    // Merge habits by id; cloud completions override local for same date
+    if (cloudState.grades && Array.isArray(cloudState.grades)) state.grades = cloudState.grades;
+    if (cloudState.attendance && Array.isArray(cloudState.attendance)) state.attendance = cloudState.attendance;
+    
     if (Array.isArray(cloudState.habits)) {
       if (!Array.isArray(state.habits)) state.habits = [];
       cloudState.habits.forEach(cloudH => {
@@ -2338,13 +2274,11 @@ async function restoreFromCloud() {
         if (idx < 0) {
           state.habits.push(cloudH);
         } else {
-          // Merge completions (union of dates)
           state.habits[idx].completions = { ...(state.habits[idx].completions || {}), ...(cloudH.completions || {}) };
         }
       });
     }
     
-    // Preserve sensitive keys
     if (!state.apiKey && localApiKey) state.apiKey = localApiKey;
     if (!state.gcalClientId && localGcalClientId) state.gcalClientId = localGcalClientId;
     if (!state.waPhone && localWaPhone) state.waPhone = localWaPhone;
@@ -2353,13 +2287,13 @@ async function restoreFromCloud() {
     render();
     if (el) {
       el.style.color = 'var(--green)';
-      el.textContent = '✅ Successfully merged cloud data!';
+      el.textContent = `✅ Restored and syncing (${user.email})`;
     }
   } catch(e) {
     console.error('Restore error:', e);
     if (el) {
       el.style.color = 'var(--coral)';
-      el.textContent = '❌ Cloud restore failed: ' + (e.message || 'Unknown error');
+      el.textContent = '❌ Restore failed: ' + e.message;
     }
   }
 }

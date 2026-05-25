@@ -431,30 +431,14 @@
         <div id="backup-status" style="font-size:12px;margin-top:8px;color:var(--text3);display:none;padding:8px;background:var(--surface2);border-radius:6px;"></div>
       </div>
       <div class="settings-section">
-        <div class="settings-label">☁️ Cloud Sync (Supabase)</div>
-        <div class="settings-desc">Optional: Sync your data securely to your own Supabase instance.</div>
-        <div class="form-group">
-          <label class="form-label">Supabase URL</label>
-          <input class="form-input" type="text" id="supabase-url" placeholder="https://xyz.supabase.co">
-        </div>
-        <div class="form-group" style="position:relative;">
-          <label class="form-label">Supabase Anon Key</label>
-          <input class="form-input" type="password" id="supabase-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Sync ID</label>
-          <div style="display:flex;gap:8px;">
-            <input class="form-input" type="text" id="supabase-sync-id" placeholder="Auto-generated" readonly style="flex:1;">
-            <button class="btn-cancel" onclick="generateSyncId()">New ID</button>
-          </div>
-          <div style="font-size:11px;color:var(--text3);margin-top:4px;">Keep this ID secret! Use it on your other devices to sync.</div>
-        </div>
+        <div class="settings-label">☁️ Cloud Sync (Google)</div>
+        <div class="settings-desc">Sync your data seamlessly using your Google account.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-          <button class="btn-save" onclick="saveSupabaseConfig()">💾 Save Config</button>
-          <button class="btn-cancel" onclick="syncToCloud()" style="background:var(--accent);color:#fff;">☁️ Sync Now</button>
-          <button class="btn-cancel" onclick="restoreFromCloud()">⬇️ Restore</button>
+          <button class="btn-save" id="fb-signin-btn" onclick="signInWithGoogle()">Sign in with Google</button>
+          <button class="btn-cancel" id="fb-signout-btn" onclick="signOut()" style="display:none;">Sign Out</button>
+          <button class="btn-cancel" onclick="syncToCloud()" style="background:var(--accent);color:#fff;" id="fb-sync-btn" disabled>☁️ Force Sync</button>
         </div>
-        <div id="supabase-status" style="font-size:12px;color:var(--text3);padding:8px;background:var(--surface2);border-radius:6px;display:none;"></div>
+        <div id="firebase-status" style="font-size:12px;color:var(--text3);padding:8px;background:var(--surface2);border-radius:6px;">Not signed in.</div>
       </div>
       <div class="settings-section">
         <div class="settings-label">🔔 Notifications</div>
@@ -496,13 +480,7 @@
           <button class="btn-cancel" id="gcal-disconnect-btn" onclick="disconnectGoogleCalendar()" style="display:none;">✕ Disconnect</button>
         </div>
         <div id="gcal-status" style="font-size:12px;color:var(--text3);padding:8px;background:var(--surface2);border-radius:6px;display:none;"></div>
-        <div style="margin-top:10px;">
-          <label class="form-label">Google Client ID <span style="color:var(--text3);font-weight:400;">(from Google Cloud Console)</span></label>
-          <input class="form-input" id="gcal-client-id" placeholder="xxxxxxxx.apps.googleusercontent.com" style="margin-top:4px;">
-          <div style="font-size:11px;color:var(--text3);margin-top:6px;">
-            Get a Client ID free at <a href="https://console.cloud.google.com" target="_blank" style="color:var(--accent);">console.cloud.google.com</a> → APIs & Services → Credentials → OAuth 2.0 Client ID (Web App). Add <code style="background:var(--surface3);padding:1px 5px;border-radius:3px;">https://lazypanda.app</code> as an authorized origin.
-          </div>
-        </div>
+
       </div>
       <div class="settings-section">
         <div class="settings-label">💬 WhatsApp Reminders</div>
@@ -904,8 +882,10 @@
   <!-- Google Identity Services (GCal Sync) -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
-  <!-- Supabase JS Client (loaded dynamically if needed or just kept available) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Firebase Compat SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore-compat.js"></script>
 
   <!-- App scripts — Load order matters: state → render → ai → app -->
   <script src="js/state.js"></script>
