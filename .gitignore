@@ -16,3 +16,26 @@ Thumbs.db
 *.swp
 *~
 .claude/
+
+# ── Firebase / Cloud Functions ────────────────────────────────────────────────
+functions/node_modules/
+functions/.runtimeconfig.json
+functions/lib/
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+ui-debug.log
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+serviceAccountKey*.json

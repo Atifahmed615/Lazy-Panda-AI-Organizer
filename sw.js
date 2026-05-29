@@ -1,7 +1,8 @@
-// CACHE_VERSION can be updated by a build script or manually bumped to bust cache.
-// Build systems can inject __BUILD_TS__ via sed or webpack: const CACHE_VERSION = 'lazy-panda-v' + '__BUILD_TS__';
-// For now, use a manual version that developers update:
-const CACHE_VERSION = 'lazy-panda-v20260525g-habits';
+// CACHE_VERSION follows LAZY_PANDA_BUILD (defined in js/version.js).
+// Bump that single constant on each release; the SW cache invalidates automatically.
+try { importScripts('./js/version.js'); } catch (e) { /* SW may be parsed before file ships */ }
+const _BUILD = (typeof LAZY_PANDA_BUILD === 'string' && LAZY_PANDA_BUILD) ? LAZY_PANDA_BUILD : 'unversioned';
+const CACHE_VERSION = 'lazy-panda-v' + _BUILD;
 const CACHE_NAME = CACHE_VERSION;
 const FONT_CACHE = 'lazy-panda-fonts-v1';
 const MAX_CACHE_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days for fonts
@@ -13,10 +14,17 @@ const APP_SHELL = [
   './icon.png',
   './panda.svg',
   './css/style.css',
+  './js/version.js',
   './js/state.js',
   './js/render.js',
   './js/ai.js',
-  './js/app.js'
+  './js/app.js',
+  './js/flashcards.js',
+  './js/onboarding.js',
+  './js/weekly-review.js',
+  './js/drag-reschedule.js',
+  './js/auto-scheduler.js',
+  './js/privacy-lock.js'
 ];
 
 self.addEventListener('install', function(e) {

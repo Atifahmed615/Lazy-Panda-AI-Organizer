@@ -15,9 +15,9 @@
 
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
-<link rel="icon" href="icon.png"> 
+<link rel="icon" href="icon.png">
+<script src="js/version.js"></script>
 <script>
-  window.LAZY_PANDA_BUILD = '2026.05.25.1-habits';
   window.__lpSwRegistration = null;
   window.__lpSwStatus = { text: 'Service worker not checked yet', color: 'var(--text3)' };
   window.__setLpSwStatus = function(text, color) {
@@ -125,6 +125,16 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
       </span> Stats
     </div>
+    <div class="nav-item lp-flag-nav" data-flag="eisenhower" id="nav-eisenhower" onclick="showView('eisenhower')" role="button" tabindex="0" aria-label="Navigate to Eisenhower matrix" style="display:none;">
+      <span class="nav-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+      </span> Matrix
+    </div>
+    <div class="nav-item lp-flag-nav" data-flag="flashcards" id="nav-flashcards" onclick="showView('flashcards')" role="button" tabindex="0" aria-label="Navigate to Flashcards" style="display:none;">
+      <span class="nav-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </span> Flashcards <span class="nav-badge" id="flashcard-badge" style="display:none;">0</span>
+    </div>
 
 
     <div class="nav-section" style="margin-top:12px;">System</div>
@@ -162,6 +172,18 @@
 
     <!-- DASHBOARD VIEW -->
     <div id="view-dashboard">
+      <!-- NL Quick-Add Bar (Phase 3, flag: nlQuickAdd) -->
+      <div id="nl-quick-add-bar" class="nl-quick-add-bar" style="display:none;">
+        <span class="nl-qa-icon">✨</span>
+        <input type="text" id="nl-qa-input" class="nl-qa-input" placeholder='Type anything — e.g. "Study ML tomorrow 6-9pm at NED"' onkeydown="handleNlQuickAddKey(event)">
+        <button class="nl-qa-btn" onclick="submitNlQuickAdd()" id="nl-qa-submit">Add</button>
+      </div>
+      <!-- AI Auto-Scheduler trigger (Phase 4, flag: autoScheduler) -->
+      <div id="auto-scheduler-bar" style="display:none;margin-bottom:12px;">
+        <button class="btn-save" style="width:100%;background:linear-gradient(135deg,#7c6ff7,#60a5fa);" onclick="runAutoScheduler()">🤖 Schedule my week with AI</button>
+      </div>
+      <div id="ai-dashboard-greeting" class="ai-greeting-card" style="display:none;"></div>
+      <div id="ai-proactive-reschedule" class="ai-proactive-card" style="display:none;"></div>
       <div id="conflict-banner-wrap"></div>
       <div id="gcal-banner-wrap"></div>
 
@@ -328,6 +350,30 @@
       <div id="deadlines-list"></div>
     </div>
 
+    <!-- EISENHOWER MATRIX VIEW (Phase 2, flag: eisenhower) -->
+    <div id="view-eisenhower" class="hidden">
+      <div class="section-header">
+        <span class="section-title">EISENHOWER MATRIX</span>
+        <button class="btn-add" onclick="showAddTaskModal()">＋ Add Task</button>
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:12px;">Tap a task to cycle its quadrant: ⬆️ raises importance, ⏰ urgency follows due date.</div>
+      <div id="eisenhower-grid"></div>
+    </div>
+
+    <!-- FLASHCARDS VIEW (Phase 2, flag: flashcards) -->
+    <div id="view-flashcards" class="hidden">
+      <div class="section-header">
+        <span class="section-title">FLASHCARDS</span>
+        <div style="display:flex;gap:6px;">
+          <button class="btn-add" onclick="startFlashcardReview()" id="fc-review-btn">Review</button>
+          <button class="btn-add" onclick="showAddFlashcardModal()">＋ Add Card</button>
+        </div>
+      </div>
+      <div id="flashcards-summary"></div>
+      <div id="flashcards-list"></div>
+      <div id="flashcard-review-pane" class="hidden"></div>
+    </div>
+
     <!-- STATS VIEW -->
     <div id="view-stats" class="hidden">
       <div class="section-header">
@@ -379,22 +425,34 @@
         <div class="settings-desc" style="margin-top:6px;">Travel buffer adds breathing room between back-to-back events. Set to 0 to disable.</div>
       </div>
       <div class="settings-section">
-        <div class="settings-label">🔑 Gemini API Key</div>
+        <div class="settings-label">🤖 AI Assistant Settings</div>
         <div class="settings-desc">
-          Required for the AI assistant — <b style="color:var(--green);">completely free</b>, no credit card needed.<br><br>
-          <b>Steps to get your key:</b><br>
-          1. Go to <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent);">aistudio.google.com/apikey</a><br>
-          2. Sign in with your Google account<br>
-          3. Click <b>"Create API Key"</b><br>
-          4. Copy and paste it below
+          <b>API Key</b> (Required for AI — <b style="color:var(--green);">completely free</b>)<br>
+          Get it here: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent);">aistudio.google.com/apikey</a>
         </div>
-        <div style="position:relative;margin-bottom:10px;">
-          <input class="form-input" type="password" id="settings-api-key" placeholder="AIzaSy..." style="padding-right:44px;">
+        <div style="position:relative;margin-bottom:12px;">
+          <input class="form-input" type="password" id="settings-api-key" placeholder="Paste your Gemini API key (AIzaSy...)" style="padding-right:44px;">
           <span onclick="toggleKeyVisibility()" id="key-eye" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:16px;color:var(--text3);">👁</span>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn-save" onclick="saveApiKey()">💾 Save Key</button>
-          <button class="btn-cancel" onclick="testApiKey()" id="test-btn">🧪 Test Key</button>
+        
+        <div class="form-group form-row">
+          <div>
+            <label class="form-label">How should I address you?</label>
+            <input class="form-input" type="text" id="settings-username" onchange="changeAiSettings()" placeholder="Boss">
+          </div>
+          <div>
+            <label class="form-label">My Personality</label>
+            <select class="form-input" id="settings-personality" onchange="changeAiSettings()">
+              <option value="Sassy">Sassy & Sarcastic</option>
+              <option value="Gentle">Gentle & Encouraging</option>
+              <option value="Professional">Strict Professional</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+          <button class="btn-save" onclick="saveApiKey()">💾 Save AI Settings</button>
+          <button class="btn-cancel" onclick="testApiKey()" id="test-btn">🧪 Test Connection</button>
         </div>
         <div id="api-key-status" style="font-size:12px;margin-top:10px;color:var(--text3);padding:8px;background:var(--surface2);border-radius:6px;display:none;"></div>
       </div>
@@ -461,6 +519,10 @@
             <button class="btn-cancel" onclick="testNotification()">🧪 Test Notification</button>
           </div>
         </div>
+        <div style="margin-top:12px;padding:10px;background:var(--surface2);border-radius:8px;">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px;">📡 Background Push (Firebase)</div>
+          <div id="fcm-status" style="font-size:12px;color:var(--text3);">Sign in with Google (Cloud Sync) to enable bulletproof push notifications.</div>
+        </div>
       </div>
       <div class="settings-section">
         <div class="settings-label">📤 Share Schedule</div>
@@ -505,6 +567,29 @@
         </div>
         <div id="wa-status" style="font-size:12px;margin-top:8px;color:var(--text3);display:none;padding:8px;background:var(--surface2);border-radius:6px;"></div>
       </div>
+      <div class="settings-section" id="privacy-lock-section" style="display:none;">
+        <div class="settings-label">🔒 Privacy Lock</div>
+        <div class="settings-desc">Optional 4-digit PIN required to open the app. Stored only on this device as a salted SHA-256 hash.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+          <button class="btn-save" onclick="setPrivacyPin()" id="pl-set-btn">Set / Change PIN</button>
+          <button class="btn-cancel" onclick="disablePrivacyLock()" id="pl-disable-btn">Disable Lock</button>
+        </div>
+        <div id="pl-status" style="font-size:12px;color:var(--text3);"></div>
+      </div>
+      <div class="settings-section" id="ical-subscribe-section" style="display:none;">
+        <div class="settings-label">🔗 Live iCal Subscription</div>
+        <div class="settings-desc">Subscribe to your Lazy Panda schedule in Apple/Google/Outlook Calendar. Updates push automatically as you edit. Requires Cloud Sync sign-in + the <code>icalFeed</code> Cloud Function deployed.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <button class="btn-save" onclick="copyIcalSubscribeUrl()">📋 Copy Subscribe URL</button>
+          <button class="btn-cancel" onclick="rotateIcalToken()">🔄 Rotate Token</button>
+        </div>
+        <div id="ical-status" style="font-size:12px;color:var(--text3);padding:8px;background:var(--surface2);border-radius:6px;display:none;"></div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label">🧪 Labs — Experimental Features</div>
+        <div class="settings-desc">Toggle in-development features. They're hidden by default while they bake; turning one on only affects your device.</div>
+        <div id="labs-flags-list" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;"></div>
+      </div>
       <div class="settings-section">
         <div class="settings-label">🗑️ Reset Data</div>
         <div class="settings-desc">Factory reset your schedule data and leave the app blank.</div>
@@ -544,7 +629,7 @@
 
       <div class="chat-input-area">
         <textarea class="chat-input" id="chat-input" placeholder="Ask anything about your schedule…" rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-        <button class="voice-btn" id="voice-btn" title="Click to speak" aria-label="Voice input: click to speak your message" onclick="startVoiceInput()">🎤</button>
+        <button class="voice-btn" id="voice-btn" title="Click to speak" aria-label="Voice input: click to speak your message" onclick="startVoiceInput()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg></button>
         <button class="chat-send" id="chat-send" onclick="sendMessage()" aria-label="Send message">↑</button>
       </div>
 
@@ -722,6 +807,20 @@
     <div style="margin-top:-8px;margin-bottom:14px;">
       <button class="inline-link-btn" type="button" onclick="resetEventColor()">Reset to category color</button>
     </div>
+    <div class="form-group" id="ev-energy-group" style="display:none;">
+      <label class="form-label">Energy level</label>
+      <div id="ev-energy-pills" style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button type="button" class="ev-energy-pill" data-energy="" onclick="setEventEnergy('')">None</button>
+        <button type="button" class="ev-energy-pill" data-energy="high" onclick="setEventEnergy('high')">🔋 High</button>
+        <button type="button" class="ev-energy-pill" data-energy="medium" onclick="setEventEnergy('medium')">🟡 Medium</button>
+        <button type="button" class="ev-energy-pill" data-energy="low" onclick="setEventEnergy('low')">🌙 Low</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Used by the AI auto-scheduler to place demanding tasks during your high-energy windows.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Notes <span id="ev-notes-hint" style="font-size:11px;color:var(--text3);font-weight:400;">(plain text)</span></label>
+      <textarea class="form-input" id="ev-notes" rows="4" placeholder="Lecture notes, links, reminders..." style="resize:vertical;min-height:80px;font-family:inherit;"></textarea>
+    </div>
     <div class="modal-actions">
           <button class="btn-cancel" onclick="closeModal('event-modal')" aria-label="Cancel adding event">Cancel</button>
       <button class="btn-save" onclick="saveEvent()" aria-label="Save event">Save Event</button>
@@ -772,6 +871,11 @@
           <option value="6">Saturday</option>
         </select>
       </div>
+    </div>
+    <div class="form-group" id="tk-duration-group" style="display:none;">
+      <label class="form-label">Estimated time (minutes)</label>
+      <input class="form-input" type="number" min="5" max="600" step="5" id="tk-est-minutes" placeholder="e.g. 45">
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;">Rough estimate. The AI auto-scheduler uses this to find a slot.</div>
     </div>
     <div class="form-group">
       <label class="form-label">Subtasks</label>
@@ -853,6 +957,44 @@
 
 <!-- Academic modals removed (attendance, grades, notes). -->
 
+<!-- AUTO-SCHEDULER PREVIEW MODAL (Phase 4) -->
+<div class="modal-overlay hidden" id="auto-scheduler-modal" role="dialog" aria-modal="true" aria-labelledby="auto-sched-title">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-title" id="auto-sched-title">AI Suggested Schedule</div>
+    <div id="auto-sched-body" style="max-height:60vh;overflow-y:auto;"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('auto-scheduler-modal')">Cancel</button>
+      <button class="btn-save" onclick="acceptAutoSchedule()" id="auto-sched-accept">Accept</button>
+    </div>
+  </div>
+</div>
+
+<!-- FLASHCARD MODAL (Phase 2) -->
+<div class="modal-overlay hidden" id="flashcard-modal" role="dialog" aria-modal="true" aria-labelledby="flashcard-modal-title">
+  <div class="modal">
+    <div class="modal-title" id="flashcard-modal-title">Add Flashcard</div>
+    <div class="form-group">
+      <label class="form-label">Deck (optional)</label>
+      <input class="form-input" id="fc-deck" placeholder="e.g. ML, Math, Spanish">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Front</label>
+      <textarea class="form-input" id="fc-front" rows="3" placeholder="Question or prompt" style="resize:vertical;font-family:inherit;"></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Back</label>
+      <textarea class="form-input" id="fc-back" rows="4" placeholder="Answer" style="resize:vertical;font-family:inherit;"></textarea>
+    </div>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="btn-cancel" id="fc-delete-btn" style="background:var(--coral-bg);color:var(--coral);display:none;" onclick="deleteFlashcardFromModal()">Delete</button>
+      <div style="display:flex;gap:8px;margin-left:auto;">
+        <button class="btn-cancel" onclick="closeModal('flashcard-modal')">Cancel</button>
+        <button class="btn-save" onclick="saveFlashcard()">Save Card</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- KEYBOARD SHORTCUTS MODAL -->
 <div class="modal-overlay hidden" id="shortcuts-modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-modal-title">
   <div class="modal" style="max-width:600px;">
@@ -886,13 +1028,30 @@
   <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-messaging-compat.js"></script>
 
-  <!-- App scripts — Load order matters: state → render → ai → app -->
-  <script src="js/state.js"></script>
-  <script src="js/render.js"></script>
-  <script src="js/ai.js"></script>
-  <script src="js/app.js"></script>
+  <!-- App scripts — Load order matters.
+       state → cloud-sync (defines window.auth/db) → fcm (uses window.auth)
+       → calendar-api → two-way-sync → tasks → habits → notifications
+       → render → ai → proactive → app
+       defer guarantees execution order matches DOM order and runs after parsing. -->
+  <script defer src="js/state.js"></script>
+  <script defer src="js/cloud-sync.js"></script>
+  <script defer src="js/fcm.js"></script>
+  <script defer src="js/calendar-api.js"></script>
+  <script defer src="js/two-way-sync.js"></script>
+  <script defer src="js/tasks.js"></script>
+  <script defer src="js/habits.js"></script>
+  <script defer src="js/flashcards.js"></script>
+  <script defer src="js/onboarding.js"></script>
+  <script defer src="js/weekly-review.js"></script>
+  <script defer src="js/drag-reschedule.js"></script>
+  <script defer src="js/auto-scheduler.js"></script>
+  <script defer src="js/privacy-lock.js"></script>
+  <script defer src="js/notifications.js"></script>
+  <script defer src="js/render.js"></script>
+  <script defer src="js/ai.js"></script>
+  <script defer src="js/proactive.js"></script>
+  <script defer src="js/app.js"></script>
 </body>
 </html>
-  
-  <!-- Load order matters: state → render → ai �

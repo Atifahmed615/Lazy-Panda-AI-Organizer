@@ -25,58 +25,111 @@ let uploadedDocs = [];
 let lastOptimizerResult = null;
 
 function defaultEvents() {
-  const today = new Date();
-  const fmt = d => d.toISOString().split('T')[0];
-  const dayOfWeek = today.getDay(); // 0=Sun
-
-  // Compute next occurrence of a given weekday
-  function nextDay(targetDay) {
-    let d = new Date(today);
-    let diff = (targetDay - dayOfWeek + 7) % 7;
-    if (diff === 0) diff = 0;
-    d.setDate(d.getDate() + diff);
-    return fmt(d);
-  }
-
-  return [
-    { id:'e1', title:'Machine Learning', category:'class', date: nextDay(1), start:'18:00', end:'21:00', location:'NED CIS Department', recurring:'weekly' },
-    { id:'e2', title:'Mathematics for AI', category:'class', date: nextDay(2), start:'18:00', end:'21:00', location:'NED CIS Department', recurring:'weekly' },
-    { id:'e3', title:'Introduction to AI', category:'class', date: nextDay(3), start:'18:00', end:'21:00', location:'NED CIS Department', recurring:'weekly' },
-    { id:'e4', title:'Understanding Holy Quran 1', category:'class', date: nextDay(4), start:'18:00', end:'21:00', location:'NED Auditorium', recurring:'weekly' },
-    { id:'e5', title:'AI-Driven Dev & Claude Code', category:'class', date: nextDay(5), start:'20:00', end:'22:00', location:'Online', recurring:'weekly' },
-    { id:'e6', title:'AI-Driven Dev & Claude Code', category:'class', date: nextDay(6), start:'20:00', end:'22:00', location:'Online', recurring:'weekends' },
-    { id:'e7', title:'PGD: Machine Learning', category:'class', date: nextDay(6), start:'11:00', end:'13:00', location:'NED Textile Department', recurring:'weekends' },
-    { id:'e9', title:'CAIPP', category:'class', date: nextDay(6), start:'14:00', end:'18:00', location:'PNEC Computer Science Dept', recurring:'weekly' },
-  ];
+  return [];
 }
 
 function defaultHabits() {
-  const today = todayStr();
-  return [
-    { id:'h1', name:'Read for 20 minutes', emoji:'📖', color:'#7c6ff7', type:'checkoff',                                  frequency:'daily', weeklyTarget:7, weekdays:[0,1,2,3,4,5,6], createdAt: today, completions:{}, reminderTime:'' },
-    { id:'h2', name:'Drink water',         emoji:'💧', color:'#60a5fa', type:'counter',  target:8,   unit:'glasses',     frequency:'daily', weeklyTarget:7, weekdays:[0,1,2,3,4,5,6], createdAt: today, completions:{}, reminderTime:'' },
-    { id:'h3', name:'Exercise',            emoji:'🏃', color:'#34d399', type:'checkoff',                                  frequency:'weekly', weeklyTarget:4, weekdays:[1,2,3,4,5],     createdAt: today, completions:{}, reminderTime:'' },
-  ];
+  return [];
 }
 
 function defaultTasks() {
-  const today = new Date().toISOString().split('T')[0];
-  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
-  const tmrw = tomorrow.toISOString().split('T')[0];
-  return [
-    { id:'t1', name:'Review ML backpropagation notes', due: today, priority:'high', done: false },
-    { id:'t2', name:'Complete Math for AI assignment', due: today, priority:'medium', done: false },
-    { id:'t3', name:'Prepare CAIPP presentation', due: tmrw, priority:'high', done: false },
-    { id:'t4', name:'Read Quran tafseer chapter 2', due: tmrw, priority:'low', done: false },
-  ];
+  return [];
 }
 
-let state = { events: [], tasks: [], habits: [], attendance: [], grades: [], apiKey: '', theme: 'dark', accent: '#7c6ff7', currentView: DEFAULT_VIEW, showFreeTime: true, weeklyHourLimit: 50, travelBufferMins: 10, aiRecentActions: [], customReminders: [] };
+// ══════════════════════════════════════════════
+//  FEATURE FLAGS
+//  Every in-progress feature lives behind a flag. Default off.
+//  Toggle in Settings → Labs, or via console: state.flags.X = true; saveState();
+// ══════════════════════════════════════════════
+function defaultFlags() {
+  return {
+    // Phase 1 — pure additive
+    markdownNotes: false,    // render event notes as markdown
+    energyTags: false,       // energy field on events + picker
+    taskDuration: false,     // estMinutes field on tasks + picker
+    pomodoroStats: false,    // log focus sessions + weekly stat card
+    // Phase 2 — new views
+    eisenhower: false,       // 2x2 priority/urgency matrix view
+    flashcards: false,       // SM-2 spaced repetition module
+    // Phase 3 — dashboard surface
+    nlQuickAdd: false,       // natural-language quick-add bar
+    onboarding: false,       // first-run guided tour
+    weeklyReview: false,     // Sunday-evening AI recap
+    // Phase 4 — calendar interactions
+    dragReschedule: false,   // drag events on the week grid
+    taskCalendarDrag: false, // drag tasks onto free slots
+    autoScheduler: false,    // AI auto-place tasks across the week
+    // Phase 5 — infra / cross-cutting
+    icalSubscribe: false,    // live .ics subscribe URL
+    privacyLock: false,      // PIN/WebAuthn on app boot
+  };
+}
+
+let state = { events: [], tasks: [], habits: [], attendance: [], grades: [], apiKey: '', theme: 'dark', accent: '#7c6ff7', currentView: DEFAULT_VIEW, showFreeTime: true, weeklyHourLimit: 100, travelBufferMins: 10, aiRecentActions: [], customReminders: [], hideGcalPromo: false, userName: 'Boss', aiPersonality: 'Sassy', flags: defaultFlags(), focusLog: [], flashcards: [], onboardingDone: false };
 
 // Undo/Redo stacks for destructive actions
 let undoStack = [];
 let redoStack = [];
 const MAX_UNDO_ENTRIES = 20;
+
+// ══════════════════════════════════════════════
+//  SCHEMA MIGRATIONS
+//  Single source of truth for default values on legacy records.
+//  When a new phase adds a field, add it here so old data stays valid.
+//  Each function is idempotent — safe to call repeatedly on the same record.
+// ══════════════════════════════════════════════
+function migrateEvent(ev) {
+  if (!ev || typeof ev !== 'object') return ev;
+  if (!ev.recurringEndDate) ev.recurringEndDate = '';
+  if (!ev.color) ev.color = '';
+  if (typeof ev.notes !== 'string') ev.notes = '';
+  if (ev.energy === undefined) ev.energy = null;           // Phase 1: high|medium|low|null
+  if (ev.taskId === undefined) ev.taskId = '';             // Phase 4: link back to task
+  if (typeof ev.gcalEventId !== 'string') ev.gcalEventId = ev.gcalEventId || '';
+  return ev;
+}
+
+function migrateTask(t) {
+  if (!t || typeof t !== 'object') return t;
+  if (!Array.isArray(t.subtasks)) t.subtasks = [];
+  if (!t.recurring) t.recurring = 'none';
+  if (t.recurringDay === undefined) t.recurringDay = new Date((t.due || todayStr()) + 'T12:00:00').getDay();
+  if (!Array.isArray(t.doneDates)) t.doneDates = [];
+  if (t.estMinutes === undefined) t.estMinutes = null;     // Phase 1: rough duration estimate
+  return t;
+}
+
+function migrateHabit(h) {
+  if (!h || typeof h !== 'object') return h;
+  if (!h.id) h.id = 'h' + Date.now() + Math.random().toString(36).slice(2);
+  if (!h.type) h.type = 'checkoff';
+  if (!h.frequency) h.frequency = 'daily';
+  if (h.target == null) h.target = h.type === 'counter' ? 1 : 1;
+  if (!h.unit) h.unit = '';
+  if (!h.color) h.color = HABIT_COLOR_PRESETS[0];
+  if (!h.emoji) h.emoji = '⭐';
+  if (!Array.isArray(h.weekdays)) h.weekdays = [0,1,2,3,4,5,6];
+  if (h.weeklyTarget == null) h.weeklyTarget = h.frequency === 'daily' ? 7 : (h.weekdays.length || 7);
+  if (!h.createdAt) h.createdAt = todayStr();
+  if (!h.completions || typeof h.completions !== 'object') h.completions = {};
+  if (typeof h.reminderTime !== 'string') h.reminderTime = '';
+  if (h.archived === undefined) h.archived = false;
+  return h;
+}
+
+// Top-level state migration: defaults for new top-level keys.
+function migrateState(s) {
+  if (!s || typeof s !== 'object') return s;
+  if (!s.flags || typeof s.flags !== 'object') s.flags = defaultFlags();
+  else s.flags = { ...defaultFlags(), ...s.flags };       // merge in any newly-introduced flags
+  if (!Array.isArray(s.focusLog)) s.focusLog = [];        // Phase 1
+  if (!Array.isArray(s.flashcards)) s.flashcards = [];    // Phase 2
+  if (typeof s.onboardingDone !== 'boolean') s.onboardingDone = false;
+  if (typeof s.icalToken !== 'string') s.icalToken = '';   // Phase 5: lazily generated when subscription used
+  if (typeof s.privacyLockEnabled !== 'boolean') s.privacyLockEnabled = false; // Phase 5
+  if (typeof s.privacyLockHash !== 'string') s.privacyLockHash = '';
+  return s;
+}
 
 function loadState() {
   try {
@@ -147,38 +200,23 @@ function loadState() {
     if (!state.waServer) state.waServer = '';
     if (!state.currentView) state.currentView = DEFAULT_VIEW;
     if (state.showFreeTime === undefined) state.showFreeTime = true;
-    if (!state.weeklyHourLimit) state.weeklyHourLimit = 50;
+    if (!state.weeklyHourLimit) state.weeklyHourLimit = 100;
     if (state.travelBufferMins === undefined) state.travelBufferMins = 10;
     if (!Array.isArray(state.aiRecentActions)) state.aiRecentActions = [];
     if (!Array.isArray(state.customReminders)) state.customReminders = [];
+    if (state.hideGcalPromo === undefined) state.hideGcalPromo = false;
+    // Used by js/proactive.js — list of event ids the user marked complete,
+    // and list of missed-event ids whose reschedule prompt was dismissed.
+    if (!Array.isArray(state.completedEvents)) state.completedEvents = [];
+    if (!Array.isArray(state.dismissedMissedEvents)) state.dismissedMissedEvents = [];
     // Prune fired reminders older than today
     state.customReminders = state.customReminders.filter(r => !r.fired || r.date >= todayStr());
-    state.events.forEach(ev => {
-      if (!ev.recurringEndDate) ev.recurringEndDate = '';
-      if (!ev.color) ev.color = '';
-    });
-    state.tasks.forEach(t => {
-      if (!Array.isArray(t.subtasks)) t.subtasks = [];
-      if (!t.recurring) t.recurring = 'none';
-      if (t.recurringDay === undefined) t.recurringDay = new Date((t.due || todayStr()) + 'T12:00:00').getDay();
-      if (!t.doneDates) t.doneDates = [];
-    });
+    // Centralized schema migration — each record gets its default fields filled in.
+    migrateState(state);
+    state.events.forEach(migrateEvent);
+    state.tasks.forEach(migrateTask);
     if (!Array.isArray(state.habits)) state.habits = [];
-    state.habits.forEach(h => {
-      if (!h.id) h.id = 'h' + Date.now() + Math.random().toString(36).slice(2);
-      if (!h.type) h.type = 'checkoff';
-      if (!h.frequency) h.frequency = 'daily';
-      if (h.target == null) h.target = h.type === 'counter' ? 1 : 1;
-      if (!h.unit) h.unit = '';
-      if (!h.color) h.color = HABIT_COLOR_PRESETS[0];
-      if (!h.emoji) h.emoji = '⭐';
-      if (!Array.isArray(h.weekdays)) h.weekdays = [0,1,2,3,4,5,6];
-      if (h.weeklyTarget == null) h.weeklyTarget = h.frequency === 'daily' ? 7 : (h.weekdays.length || 7);
-      if (!h.createdAt) h.createdAt = todayStr();
-      if (!h.completions || typeof h.completions !== 'object') h.completions = {};
-      if (typeof h.reminderTime !== 'string') h.reminderTime = '';
-      if (h.archived === undefined) h.archived = false;
-    });
+    state.habits.forEach(migrateHabit);
     document.documentElement.setAttribute('data-theme', state.theme || 'dark');
     if (state.accent) document.documentElement.style.setProperty('--accent', state.accent);
     const statusEl = document.getElementById('api-status-sidebar');
@@ -210,8 +248,13 @@ function saveState() {
   calendarCache = {};
   _conflictCache = null;
 
-  // Auto-sync
+  // Auto-sync full state to Firestore (debounced).
   if (typeof autoSyncToCloud === 'function') autoSyncToCloud();
+  // Also mirror today's compact schedule snapshot so the scheduled
+  // Cloud Function (functions/index.js) sees the latest tasks/habits/events
+  // and pushes accurate notifications. Without this, the mirror would be
+  // stale within minutes of any edit.
+  if (typeof autoMirrorScheduleToFcm === 'function') autoMirrorScheduleToFcm();
 }
 
 function resetData() {
@@ -232,7 +275,7 @@ function resetData() {
   state.waServer = '';
   state.currentView = DEFAULT_VIEW;
   state.showFreeTime = true;
-  state.weeklyHourLimit = 50;
+  state.weeklyHourLimit = 100;
   state.travelBufferMins = 10;
   state.aiRecentActions = [];
   uploadedDocs = [];
@@ -285,6 +328,39 @@ function getWeekBounds(baseDate = new Date()) {
 // XSS prevention — escape all user-supplied strings before injecting into innerHTML
 const _ESC = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' };
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => _ESC[c]); }
+
+// Minimal, safe markdown → HTML. Operates on already-escaped text so it's XSS-safe by construction.
+// Handles: headings (# ## ###), bold **x**, italic *x*, inline `code`, lists (- or 1.), links [t](u), paragraphs.
+// Anything beyond this falls back to a paragraph.
+function renderMarkdown(src) {
+  if (!src) return '';
+  let s = esc(src);
+  // Headings (process line-by-line to avoid interfering with inline syntax)
+  s = s.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  s = s.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  s = s.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  // Lists
+  s = s.replace(/(^|\n)([-*] .+(?:\n[-*] .+)*)/g, (_, prefix, block) => {
+    const items = block.split('\n').map(l => l.replace(/^[-*] /, '')).map(t => `<li>${t}</li>`).join('');
+    return prefix + `<ul>${items}</ul>`;
+  });
+  s = s.replace(/(^|\n)(\d+\. .+(?:\n\d+\. .+)*)/g, (_, prefix, block) => {
+    const items = block.split('\n').map(l => l.replace(/^\d+\. /, '')).map(t => `<li>${t}</li>`).join('');
+    return prefix + `<ol>${items}</ol>`;
+  });
+  // Inline: bold, italic, code, links
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Links — only http/https/mailto are kept; everything else is dropped.
+  s = s.replace(/\[([^\]]+)\]\(((?:https?:|mailto:)[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // Paragraphs from blank lines
+  const blocks = s.split(/\n{2,}/).map(b => {
+    if (/^\s*<(h[1-3]|ul|ol|p)/.test(b)) return b;
+    return `<p>${b.replace(/\n/g, '<br>')}</p>`;
+  });
+  return blocks.join('');
+}
 function daysBetween(a, b) {
   const start = new Date(a + 'T12:00:00');
   const end = new Date(b + 'T12:00:00');

@@ -67,6 +67,143 @@ async function geminiFetch(payload) {
     body: JSON.stringify(payload)
   });
 }
+
+// ══════════════════════════════════════════════
+//  Phase 3 — NATURAL-LANGUAGE QUICK-ADD
+//  Parses free-form text into an event OR a task via Gemini structured output.
+//  Falls back to opening the regular modal pre-filled if parsing fails.
+// ══════════════════════════════════════════════
+function handleNlQuickAddKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitNlQuickAdd(); }
+}
+window.handleNlQuickAddKey = handleNlQuickAddKey;
+
+async function submitNlQuickAdd() {
+  const input = document.getElementById('nl-qa-input');
+  const btn = document.getElementById('nl-qa-submit');
+  if (!input || !btn) return;
+  const text = input.value.trim();
+  if (!text) return;
+  if (!state.apiKey) {
+    showToast('Add a Gemini API key in Settings first');
+    return;
+  }
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const parsed = await parseNlToRecord(text);
+    if (!parsed || !parsed.type) throw new Error('Could not understand that.');
+    applyNlParsedRecord(parsed, text);
+    input.value = '';
+  } catch (e) {
+    console.warn('[NL quick-add] parse failed, opening modal pre-filled:', e);
+    showToast('Couldn\'t auto-parse — opening modal');
+    // Best-effort fallback: open event modal pre-filled with the title.
+    showAddModal();
+    const titleEl = document.getElementById('ev-title');
+    if (titleEl) titleEl.value = text;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Add';
+  }
+}
+window.submitNlQuickAdd = submitNlQuickAdd;
+
+async function parseNlToRecord(text) {
+  const today = new Date();
+  const prompt = `Parse the user's request into ONE structured record. Return ONLY valid JSON, no prose, no code fences.
+
+Today is ${today.toDateString()} (${DAYS[today.getDay()]}), local time ${today.toLocaleTimeString()}.
+
+Schema:
+{
+  "type": "event" | "task",
+  "title": string,                    // required, concise
+  "date": "YYYY-MM-DD",               // for event: occurrence date. for task: due date
+  "start": "HH:MM" | null,            // 24h, event only
+  "end":   "HH:MM" | null,            // 24h, event only, must be after start
+  "category": "class"|"study"|"meeting"|"personal"|"other" | null,  // event only
+  "location": string | null,          // event only
+  "priority": "high"|"medium"|"low" | null,                          // task only
+  "recurring": "none"|"daily"|"weekly"|"weekends"|"biweekly"|"monthly" | null
+}
+
+Rules:
+- If the user mentions due dates, deadlines, or "by", treat as a task.
+- If the user mentions time-of-day or class/meeting/session, treat as an event.
+- Resolve relative dates (today, tomorrow, next Mon, this weekend) to absolute YYYY-MM-DD.
+- If end is missing for an event, default to 1 hour after start.
+- If start is missing for an event, omit start/end (null).
+- Choose the best category. Default to "other".
+
+User text: ${JSON.stringify(text)}`;
+
+  const res = await geminiFetch({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.1, responseMimeType: 'application/json', maxOutputTokens: 400 }
+  });
+  if (!res.ok) throw new Error('API error ' + res.status);
+  const body = await res.json();
+  const raw = body?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { throw new Error('Bad JSON from model'); }
+  return parsed;
+}
+
+function applyNlParsedRecord(p, originalText) {
+  const recurring = p.recurring && ['none','daily','weekly','weekends','biweekly','monthly'].includes(p.recurring) ? p.recurring : 'none';
+  if (p.type === 'task') {
+    const t = {
+      id: 't' + Date.now(),
+      name: p.title || originalText,
+      due: p.date || todayStr(),
+      priority: ['high','medium','low'].includes(p.priority) ? p.priority : 'medium',
+      subtasks: [],
+      recurring,
+      recurringDay: new Date((p.date || todayStr()) + 'T12:00:00').getDay(),
+      doneDates: [],
+      done: false,
+      estMinutes: null,
+    };
+    state.tasks.push(t);
+    saveState(); render();
+    showToast(`✓ Task added: ${t.name}`);
+  } else {
+    const cat = ['class','study','meeting','personal','other'].includes(p.category) ? p.category : 'other';
+    const start = /^\d{2}:\d{2}$/.test(p.start || '') ? p.start : '18:00';
+    let end = /^\d{2}:\d{2}$/.test(p.end || '') ? p.end : addMinutesToTime(start, 60);
+    if (timeMins(end) <= timeMins(start)) end = addMinutesToTime(start, 60);
+    const ev = {
+      id: 'e' + Date.now(),
+      title: p.title || originalText,
+      date: p.date || todayStr(),
+      start, end,
+      category: cat,
+      location: p.location || '',
+      recurring,
+      recurringEndDate: '',
+      color: '',
+      notes: '',
+      energy: null,
+      taskId: '',
+      gcalEventId: '',
+    };
+    state.events.push(ev);
+    saveState(); render();
+    showToast(`✓ Event added: ${ev.title}`);
+    if (window.gCalAccessToken && typeof syncEventToGoogle === 'function') {
+      syncEventToGoogle(ev, ev.date).then(gcalId => {
+        if (gcalId) { ev.gcalEventId = gcalId; saveState(); }
+      });
+    }
+  }
+  // Track for "recent AI actions" memory if the array exists.
+  if (Array.isArray(state.aiRecentActions)) {
+    state.aiRecentActions.unshift({ at: new Date().toISOString(), summary: `NL quick-add: ${p.title || originalText}` });
+    state.aiRecentActions = state.aiRecentActions.slice(0, 20);
+    saveState();
+  }
+}
+window.applyNlParsedRecord = applyNlParsedRecord;
 let chatHistory = [];
 
 function buildSystemPrompt() {
@@ -92,6 +229,15 @@ function buildSystemPrompt() {
   const todayDateStr = todayStr();
 
   return `You are Lazy Panda 🐼, an intelligent scheduling assistant powered by Gemini AI embedded in a productivity app.
+
+USER PREFERENCES:
+User Name: ${state.userName || 'Boss'}
+Your Personality: ${state.aiPersonality || 'Sassy'}
+
+If the personality is "Sassy & Sarcastic", be witty, a bit lazy, slightly sarcastic but helpful.
+If "Gentle & Encouraging", be warm, supportive, and kind.
+If "Strict Professional", be concise, formal, and direct.
+Address the user as ${state.userName || 'Boss'}.
 
 CURRENT DATE & TIME: ${today.toDateString()}, ${today.toLocaleTimeString()}
 TODAY IS: ${DAYS[today.getDay()]}
@@ -392,7 +538,6 @@ function startVoiceInput() {
       isListening = true;
       voiceBtn.classList.add('active');
       voiceBtn.setAttribute('aria-label', 'Listening... click to stop');
-      voiceBtn.textContent = '🔴';
     };
 
     voiceRecognition.onresult = (event) => {
@@ -430,7 +575,6 @@ function startVoiceInput() {
       isListening = false;
       voiceBtn.classList.remove('active');
       voiceBtn.setAttribute('aria-label', 'Voice input: click to speak your message');
-      voiceBtn.textContent = '🎤';
     };
   }
 
@@ -923,3 +1067,51 @@ async function addOptimizerEventsToSchedule() {
 // ══════════════════════════════════════════════
 //  PHASE 4 — GOOGLE CALENDAR SYNC (Feature 17)
 // ══════════════════════════════════════════════
+
+async function autoWelcomeMessage() {
+  if (!state.apiKey) return;
+  const wrap = document.getElementById('ai-dashboard-greeting');
+  if (!wrap) return;
+
+  wrap.style.display = 'flex';
+  wrap.innerHTML = `
+    <div class="ai-greeting-icon"><img src="panda.svg" alt="Lazy Panda" style="width:40px;height:40px;object-fit:contain;display:block;"></div>
+    <div class="ai-greeting-text" style="opacity:0.6;font-style:italic;">Judging your schedule...</div>
+    <button class="ai-greeting-dismiss" onclick="dismissWelcome()">×</button>
+  `;
+
+  const pendingHabits = (state.habits || []).filter(h => !h.archived && isHabitScheduledOnDay(h, todayStr()) && !isHabitDoneForDate(h, todayStr()));
+  const todayEvs = getTodayEvents();
+  const pendingTasks = state.tasks.filter(t => !isTaskComplete(t) && t.due === todayStr());
+
+  const taskNames = pendingTasks.slice(0, 3).map(t => `"${t.title}"`).join(', ');
+
+  const prompt = `You are a sassy, slightly lazy panda AI assistant. Generate a single punchy motivational nudge (1-2 sentences max) for ${state.userName || 'Boss'} to get their tasks done today.
+Their workload: ${todayEvs.length} event(s), ${pendingTasks.length} task(s) due today${taskNames ? ` (${taskNames})` : ''}, ${pendingHabits.length} habit(s) pending.
+Be ${state.aiPersonality || 'Sassy'}: witty, a little sarcastic, but genuinely motivating. Reference their actual tasks/habits if any exist. No markdown, no emojis, plain text only.`;
+
+  try {
+    const res = await geminiFetch({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 500, temperature: 0.9 }
+    });
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text && text.trim()) {
+      wrap.innerHTML = `
+        <div class="ai-greeting-icon"><img src="panda.svg" alt="Lazy Panda" style="width:40px;height:40px;object-fit:contain;display:block;"></div>
+        <div class="ai-greeting-text">${text.trim()}</div>
+        <button class="ai-greeting-dismiss" onclick="dismissWelcome()">×</button>
+      `;
+    } else {
+      wrap.style.display = 'none';
+    }
+  } catch (e) {
+    wrap.style.display = 'none';
+  }
+}
+
+window.dismissWelcome = function() {
+  const wrap = document.getElementById('ai-dashboard-greeting');
+  if (wrap) wrap.style.display = 'none';
+};

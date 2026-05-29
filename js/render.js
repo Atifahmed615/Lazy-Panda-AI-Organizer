@@ -61,6 +61,10 @@ function render() {
   safeRender(renderGCalBanner,     'gcalBanner');
   safeRender(updateBadge,          'badge');
   safeRender(updateHabitBadge,     'habitBadge');
+  
+  if (typeof checkMissedSchedule === 'function') {
+    checkMissedSchedule();
+  }
 
   // Only re-render views that are currently visible — avoids wasted work on hidden panels
   if (isViewVisible('schedule'))   safeRender(renderCalendar,           'calendar');
@@ -70,6 +74,9 @@ function render() {
   if (isViewVisible('deadlines'))  safeRender(renderDeadlines,          'deadlines');
   if (isViewVisible('stats'))      safeRender(renderStats,              'stats');
   if (isViewVisible('habits'))     safeRender(renderHabits,             'habits');
+  if (isViewVisible('eisenhower') && typeof renderEisenhower === 'function') safeRender(renderEisenhower, 'eisenhower');
+  if (isViewVisible('flashcards') && typeof renderFlashcards === 'function') safeRender(renderFlashcards, 'flashcards');
+  if (typeof applyFlagNavVisibility === 'function') safeRender(applyFlagNavVisibility, 'flagNav');
 }
 
 function isValidView(view) {
@@ -144,7 +151,7 @@ function renderUpcoming() {
     <div class="upcoming-name">${esc(ev.title)}</div>
     <div class="upcoming-meta">${fmt12(ev.start)} – ${fmt12(ev.end)}${locationLink(ev.location) ? ' · ' + locationLink(ev.location) : ''}</div>
     <div class="upcoming-timer" id="timer-display">--:--</div>
-    <div class="upcoming-timer-label">until class starts</div>
+    <div class="upcoming-timer-label" id="timer-label">until event starts</div>
     <div class="upcoming-actions">
       <button class="btn-ghost" onclick="deleteEvent('${esc(ev.id)}')">Remove</button>
       <button class="btn-ghost" onclick="editEvent('${esc(ev.id)}')">Edit</button>
@@ -156,14 +163,25 @@ function renderUpcoming() {
     const start = timeMins(ev.start);
     const diff = start - now;
     const disp = document.getElementById('timer-display');
+    const labelDisp = document.getElementById('timer-label');
     if (!disp) { clearInterval(timerInterval); return; }
     if (diff <= 0) {
       const inProgress = timeMins(ev.end) - now;
-      disp.textContent = inProgress > 0 ? 'IN PROGRESS' : 'ENDED';
-      disp.style.fontSize = '18px';
+      if (inProgress > 0) {
+        const h = Math.floor(inProgress/60), m = inProgress%60;
+        disp.textContent = h > 0 ? `${h}h ${m}m` : `${m}m`;
+        if (labelDisp) labelDisp.textContent = 'remaining until ' + (ev.category === 'class' ? 'class' : 'session') + ' ends';
+        disp.style.fontSize = '';
+      } else {
+        disp.textContent = 'ENDED';
+        if (labelDisp) labelDisp.textContent = '';
+        disp.style.fontSize = '18px';
+      }
     } else {
       const h = Math.floor(diff/60), m = diff%60;
       disp.textContent = h > 0 ? `${h}h ${m}m` : `${m}m`;
+      if (labelDisp) labelDisp.textContent = ev.category === 'class' ? 'until class starts' : 'until event starts';
+      disp.style.fontSize = '';
     }
   }
   tick();
@@ -186,7 +204,7 @@ function calcWeeklyWorkload() {
   const scheduledHours = scheduledMinutes / 60;
   const pendingHours = pendingMinutes / 60;
   const totalHours = scheduledHours + pendingHours;
-  const limit = Number(state.weeklyHourLimit) || 50;
+  const limit = Number(state.weeklyHourLimit) || 100;
 
   return {
     scheduledHours,
@@ -211,9 +229,9 @@ function renderWorkloadWidget() {
     <div class="workload-top">
       <div>
         <div class="workload-label">THIS WEEK</div>
-        <div class="workload-title">${workload.totalHours.toFixed(1)}h / ${workload.limit}h committed</div>
+        <div class="workload-title">${workload.totalHours.toFixed(1)}h / ${workload.limit}h Committed</div>
       </div>
-      <div class="workload-meta">${workload.scheduledHours.toFixed(1)}h scheduled · ${workload.pendingHours.toFixed(1)}h tasks</div>
+      <div class="workload-meta">${workload.scheduledHours.toFixed(1)} Hrs Scheduled · ${workload.pendingHours.toFixed(1)} Hrs Tasks</div>
     </div>
     <div class="workload-track" aria-label="Weekly workload ${pct}%">
       <div class="workload-fill scheduled" style="width:${scheduledPct}%;background:${color};"></div>
@@ -278,20 +296,29 @@ function renderTimeline() {
     el.innerHTML = emptyState('schedule'); return;
   }
   const now = nowMins();
+  const completed = Array.isArray(state.completedEvents) ? state.completedEvents : [];
   el.innerHTML = evs.map((ev, i) => {
     const cat = CAT_COLORS[ev.category] || CAT_COLORS.other;
     const evColor = getEventColor(ev);
     const past = timeMins(ev.end) < now;
     const active = timeMins(ev.start) <= now && timeMins(ev.end) > now;
     const borderColor = getPriorityBorderColor(ev);
-    return `<div class="timeline-item priority-stripe" data-id="${esc(ev.id)}" data-type="event" role="button" tabindex="0" aria-label="${esc(ev.title)}, ${fmt12(ev.start)} to ${fmt12(ev.end)}${ev.location ? ', Location: ' + ev.location : ''}${active ? ', currently in progress' : ''}${past ? ', completed' : ''}" onclick="editEvent('${esc(ev.id)}')" onkeydown="if(event.key==='Enter' || event.key===' ') { event.preventDefault(); editEvent('${esc(ev.id)}'); }" style="--i:${i};--priority-stripe-color:${borderColor};${past?'opacity:0.45':''}${active?';background:var(--surface2);border-color:var(--border2)':''}">
+    const isDone = completed.includes(ev.id);
+    // Past events (or in-progress study/personal blocks) get a Mark-Done toggle.
+    // Used by js/proactive.js so it only nags about genuinely-missed sessions.
+    const showDoneToggle = past || active;
+    const doneBtn = showDoneToggle
+      ? `<button class="event-done-toggle${isDone ? ' done' : ''}" title="${isDone ? 'Mark as not completed' : 'Mark as completed'}" aria-label="${isDone ? 'Mark as not completed' : 'Mark as completed'}" onclick="toggleEventComplete('${esc(ev.id)}', event)">${isDone ? '✓' : '○'}</button>`
+      : '';
+    return `<div class="timeline-item priority-stripe${isDone ? ' event-completed' : ''}" data-id="${esc(ev.id)}" data-type="event" role="button" tabindex="0" aria-label="${esc(ev.title)}, ${fmt12(ev.start)} to ${fmt12(ev.end)}${ev.location ? ', Location: ' + ev.location : ''}${active ? ', currently in progress' : ''}${past ? ', past' : ''}${isDone ? ', marked complete' : ''}" onclick="editEvent('${esc(ev.id)}')" onkeydown="if(event.key==='Enter' || event.key===' ') { event.preventDefault(); editEvent('${esc(ev.id)}'); }" style="--i:${i};--priority-stripe-color:${borderColor};${past && !isDone ? 'opacity:0.45' : ''}${active ? ';background:var(--surface2);border-color:var(--border2)' : ''}">
       <div class="timeline-time">${fmt12(ev.start)}</div>
       <div class="timeline-dot" style="background:${evColor}"></div>
       <div class="timeline-content">
-        <div class="timeline-title">${esc(ev.title)}${active?' <span style="font-size:10px;color:var(--green);font-weight:600;margin-left:6px;">● LIVE</span>':''}</div>
+        <div class="timeline-title">${esc(ev.title)}${active?' <span style="font-size:10px;color:var(--green);font-weight:600;margin-left:6px;">● LIVE</span>':''}${isDone ? ' <span style="font-size:10px;color:var(--green);font-weight:600;margin-left:6px;">✓ DONE</span>' : ''}</div>
         <div class="timeline-sub">${fmt12(ev.start)} – ${fmt12(ev.end)}${locationLink(ev.location) ? ' · ' + locationLink(ev.location) : ''}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        ${doneBtn}
         <span class="badge" style="background:${getEventBg(ev)};color:${evColor}">${cat.label}</span>
       </div>
     </div>`;
@@ -324,12 +351,12 @@ function renderTasks() {
 function renderGCalBanner() {
   const wrap = document.getElementById('gcal-banner-wrap');
   if (!wrap) return;
-  if (typeof gCalAccessToken !== 'undefined' && gCalAccessToken) {
+  if (state.hideGcalPromo || (typeof gCalAccessToken !== 'undefined' && gCalAccessToken)) {
     wrap.innerHTML = '';
     return;
   }
   wrap.innerHTML = `
-    <div class="conflict-banner" style="background:var(--surface2);border-color:var(--accent);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+    <div class="conflict-banner" style="background:var(--surface2);border-color:var(--accent);display:flex;align-items:center;justify-content:space-between;gap:12px;position:relative;padding-right:32px;">
       <div style="display:flex;align-items:center;gap:12px;">
         <div style="font-size:20px;">📅</div>
         <div>
@@ -338,6 +365,9 @@ function renderGCalBanner() {
         </div>
       </div>
       <button class="btn-save" onclick="showView('settings'); setTimeout(() => document.getElementById('gcal-connect-btn').scrollIntoView({behavior:'smooth'}), 300)" style="background:var(--accent);padding:8px 16px;font-size:12px;">Connect Now</button>
+      <button onclick="dismissGCalPromo()" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--text2);cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:background 0.2s;" onmouseover="this.style.background='var(--surface3)'" onmouseout="this.style.background='none'" aria-label="Dismiss">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
     </div>
   `;
 }
@@ -458,7 +488,8 @@ function renderCalendar() {
        const top = startMin; // 1 min = 1px (since 60px per hour)
        const height = dur;
        const borderColor = getPriorityBorderColor(ev);
-       evHtml += `<div class="cal-event priority-stripe" role="button" tabindex="0" aria-label="${esc(ev.title)}, ${fmt12(ev.start)} to ${fmt12(ev.end)}${ev.location ? ', Location: ' + ev.location : ''}" onclick="editEvent('${esc(ev.id)}')" onkeydown="if(event.key==='Enter' || event.key===' ') { event.preventDefault(); editEvent('${esc(ev.id)}'); }" style="--priority-stripe-color:${borderColor};top:${top}px; height:${height}px; background:var(--surface2); border:1px solid var(--border); color:var(--text);">
+       const isRecurring = ev.recurring && ev.recurring !== 'none';
+       evHtml += `<div class="cal-event priority-stripe" role="button" tabindex="0" data-event-id="${esc(ev.id)}" data-day-idx="${i}" data-recurring="${isRecurring ? '1' : '0'}" aria-label="${esc(ev.title)}, ${fmt12(ev.start)} to ${fmt12(ev.end)}${ev.location ? ', Location: ' + ev.location : ''}" onclick="editEvent('${esc(ev.id)}')" onkeydown="if(event.key==='Enter' || event.key===' ') { event.preventDefault(); editEvent('${esc(ev.id)}'); }" style="--priority-stripe-color:${borderColor};top:${top}px; height:${height}px; background:var(--surface2); border:1px solid var(--border); color:var(--text);">
          <div class="cal-event-title">${esc(ev.title)}</div>
          <div style="font-size:8px; opacity:0.8;">${fmt12(ev.start)}</div>
          ${ev.location ? `<div style="font-size:8px; opacity:0.75;">${locationLink(ev.location)}</div>` : ''}
@@ -489,9 +520,12 @@ function renderCalendar() {
     for(let h=0; h<24; h++) gridLines += `<div class="cal-grid-line"></div>`;
     gridLines += `</div>`;
 
-    daysHtml += `<div class="cal-day-col">${gridLines}${freeHtml}${evHtml}</div>`;
+    daysHtml += `<div class="cal-day-col" data-day-idx="${i}" data-day-date="${targetDateStr}">${gridLines}${freeHtml}${evHtml}</div>`;
   }
   daysEl.innerHTML = daysHtml;
+  // Phase 4 hooks
+  if (typeof installCalendarDragHandlers === 'function') installCalendarDragHandlers();
+  if (typeof installTaskCalendarDrop === 'function') installTaskCalendarDrop();
 
   // Auto-scroll to current time (use requestAnimationFrame so layout is ready)
   requestAnimationFrame(() => {
@@ -501,7 +535,7 @@ function renderCalendar() {
     }
   });
 }
-const views = ['dashboard','schedule','tasks','deadlines','focus','habits','settings','stats','shared'];
+const views = ['dashboard','schedule','tasks','deadlines','focus','habits','settings','stats','shared','eisenhower','flashcards'];
 function showView(v, options) {
   const opts = options || {};
   if (!isValidView(v)) v = DEFAULT_VIEW;
@@ -543,24 +577,46 @@ function showView(v, options) {
   if(v==='settings') {
     const keyEl = document.getElementById('settings-api-key');
     if(keyEl) keyEl.value = state.apiKey||'';
+    // Show live key status so users immediately know if a key is saved or not
+    const keyStatusEl = document.getElementById('api-key-status');
+    if(keyStatusEl) {
+      keyStatusEl.style.display = 'block';
+      if(state.apiKey) {
+        keyStatusEl.style.color = 'var(--green)';
+        keyStatusEl.textContent = '✓ API key is saved and active — click Test Connection to verify it.';
+      } else {
+        keyStatusEl.style.color = 'var(--amber)';
+        keyStatusEl.textContent = '⚠️ No API key saved yet. Paste your key above and click Save AI Settings.';
+      }
+    }
     const themeEl = document.getElementById('settings-theme');
     if(themeEl) themeEl.value = state.theme || 'dark';
     const accentEl = document.getElementById('settings-accent');
     if(accentEl) accentEl.value = state.accent || '#7c6ff7';
     const weeklyLimitEl = document.getElementById('settings-weekly-limit');
-    if(weeklyLimitEl) weeklyLimitEl.value = state.weeklyHourLimit || 50;
+    if(weeklyLimitEl) weeklyLimitEl.value = state.weeklyHourLimit || 100;
     const travelBufEl = document.getElementById('settings-travel-buffer');
     if(travelBufEl) travelBufEl.value = state.travelBufferMins ?? 10;
+    
+    const userEl = document.getElementById('settings-username');
+    if(userEl) userEl.value = state.userName || 'Boss';
+    const personaEl = document.getElementById('settings-personality');
+    if(personaEl) personaEl.value = state.aiPersonality || 'Sassy';
+
     updateNotifStatusUI();
     updateGCalUI();
     updateWAUI();
     updateAppVersionUI();
-
+    if (typeof renderLabsFlags === 'function') renderLabsFlags();
   }
   if(v==='schedule') { requestAnimationFrame(() => { renderCalendar(); }); }
   if(v==='deadlines') renderDeadlines();
   if(v==='stats') renderStats();
   if(v==='habits') renderHabits();
+  if(v==='eisenhower' && typeof renderEisenhower === 'function') renderEisenhower();
+  if(v==='flashcards' && typeof renderFlashcards === 'function') renderFlashcards();
+  // Sync optional nav items with their flags.
+  if (typeof applyFlagNavVisibility === 'function') applyFlagNavVisibility();
 
   if (opts.pushHistory !== false) {
     const hash = v === DEFAULT_VIEW ? '' : '#' + v;
@@ -604,6 +660,104 @@ function closeMobileDrawer(useHistory = true) {
 // ══════════════════════════════════════════════
 //  STATS VIEW
 // ══════════════════════════════════════════════
+// ══════════════════════════════════════════════
+//  Phase 2 — EISENHOWER MATRIX
+// ══════════════════════════════════════════════
+function _eisQuadrantOf(task) {
+  const due = task.due ? deadlineDiffLabel(task.due) : null;
+  const isUrgent = due ? due.urgency <= 3 : false;          // due ≤ 3 days OR overdue
+  const isImportant = task.priority === 'high' || task.priority === 'medium' && due && due.urgency <= 1;
+  if (isImportant && isUrgent) return 'do';
+  if (isImportant && !isUrgent) return 'schedule';
+  if (!isImportant && isUrgent) return 'delegate';
+  return 'delete';
+}
+
+function renderEisenhower() {
+  const el = document.getElementById('eisenhower-grid');
+  if (!el) return;
+  const open = state.tasks.filter(t => !isTaskComplete(t));
+  const buckets = { do: [], schedule: [], delegate: [], delete: [] };
+  open.forEach(t => buckets[_eisQuadrantOf(t)].push(t));
+
+  const quad = (key, title, hint) => {
+    const items = buckets[key];
+    const body = items.length
+      ? items.map(t => {
+          const dueLabel = t.due ? deadlineDiffLabel(t.due).label : '';
+          const pColor = PRIORITY_COLORS[t.priority] || '#9090a8';
+          return `<div class="eis-task" onclick="cycleTaskPriority('${esc(t.id)}')" title="Click to change priority">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+              <span style="width:8px;height:8px;border-radius:50%;background:${pColor};flex-shrink:0;"></span>
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(t.name)}</span>
+            </div>
+            <span class="eis-task-due">${esc(dueLabel)}</span>
+          </div>`;
+        }).join('')
+      : `<div class="eis-empty">Nothing here.</div>`;
+    return `<div class="eis-quadrant eis-${key}">
+      <div class="eis-quad-title">${esc(title)}</div>
+      <div class="eis-quad-hint">${esc(hint)}</div>
+      ${body}
+    </div>`;
+  };
+
+  el.className = 'eis-grid';
+  el.innerHTML = [
+    quad('do',       'Do',        'Important + urgent — handle now.'),
+    quad('schedule', 'Schedule',  'Important + later — block time for it.'),
+    quad('delegate', 'Delegate',  'Urgent + not important — offload or fast-track.'),
+    quad('delete',   'Delete',    'Neither — consider dropping these.'),
+  ].join('');
+}
+
+function cycleTaskPriority(id) {
+  const t = state.tasks.find(x => x.id === id);
+  if (!t) return;
+  const cycle = ['high', 'medium', 'low'];
+  const idx = cycle.indexOf(t.priority || 'medium');
+  t.priority = cycle[(idx + 1) % cycle.length];
+  haptic(15);
+  saveState();
+  renderEisenhower();
+  showToast(`Priority → ${t.priority}`);
+}
+window.cycleTaskPriority = cycleTaskPriority;
+
+// ── Apply current flag state to optional nav items + flag-gated bars ──
+function applyFlagNavVisibility() {
+  if (!state.flags) state.flags = defaultFlags();
+  document.querySelectorAll('.lp-flag-nav').forEach(el => {
+    const flag = el.dataset.flag;
+    const on = !!state.flags[flag];
+    el.style.display = on ? '' : 'none';
+  });
+  // NL quick-add bar (dashboard)
+  const nlBar = document.getElementById('nl-quick-add-bar');
+  if (nlBar) nlBar.style.display = state.flags.nlQuickAdd ? '' : 'none';
+  // Auto-scheduler bar (dashboard)
+  const asBar = document.getElementById('auto-scheduler-bar');
+  if (asBar) asBar.style.display = state.flags.autoScheduler ? '' : 'none';
+  // iCal subscribe section (settings)
+  const icalSection = document.getElementById('ical-subscribe-section');
+  if (icalSection) icalSection.style.display = state.flags.icalSubscribe ? '' : 'none';
+  // Privacy lock section (settings)
+  const plSection = document.getElementById('privacy-lock-section');
+  if (plSection) plSection.style.display = state.flags.privacyLock ? '' : 'none';
+  const plStatus = document.getElementById('pl-status');
+  if (plStatus) plStatus.textContent = state.privacyLockEnabled ? '✓ Lock is active (PIN required at startup).' : 'Lock is off.';
+  // Flashcard due-count badge
+  if (typeof getDueFlashcardCount === 'function') {
+    const count = getDueFlashcardCount();
+    const badge = document.getElementById('flashcard-badge');
+    if (badge) {
+      badge.textContent = count;
+      badge.style.display = count > 0 ? '' : 'none';
+    }
+  }
+}
+window.applyFlagNavVisibility = applyFlagNavVisibility;
+
 function renderStats() {
   const el = document.getElementById('stats-dashboard');
   if (!el) return;
@@ -721,6 +875,24 @@ function renderStats() {
       </div>
     </div>
 
+    ${state.flags?.pomodoroStats ? (() => {
+      const fs = typeof getFocusStats === 'function' ? getFocusStats() : { todayMins:0, weekMins:0, weekWorkCount:0 };
+      const todayH = Math.floor(fs.todayMins / 60), todayM = fs.todayMins % 60;
+      const weekH = Math.floor(fs.weekMins / 60), weekM = fs.weekMins % 60;
+      return `<div class="stats-grid" style="margin-top:12px;">
+        <div class="stat-card">
+          <div class="stat-label">Focus Today</div>
+          <div class="stat-value">${todayH}h ${todayM}m</div>
+          <div class="stat-sub">${fs.todayMins ? 'keep going' : 'no focus sessions yet today'}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Focus This Week</div>
+          <div class="stat-value">${weekH}h ${weekM}m</div>
+          <div class="stat-sub">${fs.weekWorkCount} Pomodoro${fs.weekWorkCount === 1 ? '' : 's'} completed</div>
+        </div>
+      </div>`;
+    })() : ''}
+
     <!-- Weekly Heatmap Bar Chart -->
     <div class="stat-card" style="margin-top:12px; padding:16px;">
       <div class="stat-label" style="text-align:center; margin-bottom:12px;">Activity Heatmap</div>
@@ -797,8 +969,8 @@ function renderHabitsWidget() {
         <div class="habits-dw-ring-text">${done}/${scheduled.length}</div>
       </div>
       <div class="habits-dw-body">
-        <div class="habits-dw-label">HABITS TODAY</div>
-        <div class="habits-dw-title">${pct === 100 ? 'All habits done — nice. 🐼' : (scheduled.length - done) + ' habit' + (scheduled.length - done === 1 ? '' : 's') + ' left today'}</div>
+        <div class="habits-dw-label">DAILY PROGRESS</div>
+        <div class="habits-dw-title">${pct === 100 ? 'All routines complete. Outstanding. 🐼' : 'Focus Mode: ' + (scheduled.length - done) + ' Habit' + (scheduled.length - done === 1 ? '' : 's') + ' pending.'}</div>
         ${topStreaks.length ? `<div class="habits-dw-streaks">${topStreaks.map(x => `<span class="habits-dw-streak"><span style="color:${esc(x.h.color)};">${esc(x.h.emoji)}</span> ${esc(x.h.name)} · 🔥${x.s}</span>`).join('')}</div>` : ''}
       </div>
     </div>

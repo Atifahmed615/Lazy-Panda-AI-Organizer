@@ -32,6 +32,10 @@ function showAddModal() {
   document.getElementById('ev-recurring-end').value = '';
   document.getElementById('ev-color').value = CAT_COLORS.class.dot;
   document.getElementById('ev-color').dataset.reset = 'true';
+  const notesEl = document.getElementById('ev-notes');
+  if (notesEl) notesEl.value = '';
+  setEventEnergy('');
+  applyEventModalFlagVisibility();
   openModal('event-modal');
 }
 function editEvent(id) {
@@ -49,8 +53,55 @@ function editEvent(id) {
   document.getElementById('ev-recurring-end').value = ev.recurringEndDate || '';
   document.getElementById('ev-color').value = ev.color || getEventColor(ev);
   document.getElementById('ev-color').dataset.reset = ev.color ? '' : 'true';
+  const notesEl = document.getElementById('ev-notes');
+  if (notesEl) notesEl.value = ev.notes || '';
+  setEventEnergy(ev.energy || '');
+  applyEventModalFlagVisibility();
   openModal('event-modal');
 }
+
+// ── Phase 1 helpers — energy pills + modal flag visibility ──
+function setEventEnergy(val) {
+  const group = document.getElementById('ev-energy-group');
+  if (!group) return;
+  group.dataset.energy = val || '';
+  group.querySelectorAll('.ev-energy-pill').forEach(p => {
+    p.classList.toggle('is-selected', (p.dataset.energy || '') === (val || ''));
+  });
+}
+function getEventEnergy() {
+  const group = document.getElementById('ev-energy-group');
+  return group ? (group.dataset.energy || '') : '';
+}
+function applyEventModalFlagVisibility() {
+  if (!state.flags) state.flags = defaultFlags();
+  const energyGroup = document.getElementById('ev-energy-group');
+  if (energyGroup) energyGroup.style.display = state.flags.energyTags ? '' : 'none';
+  const notesHint = document.getElementById('ev-notes-hint');
+  if (notesHint) notesHint.textContent = state.flags.markdownNotes ? '(markdown — **bold**, lists, links)' : '(plain text)';
+  // Render or refresh markdown preview area.
+  let preview = document.getElementById('ev-notes-preview');
+  const notesEl = document.getElementById('ev-notes');
+  if (!notesEl) return;
+  if (state.flags.markdownNotes) {
+    if (!preview) {
+      preview = document.createElement('div');
+      preview.id = 'ev-notes-preview';
+      preview.className = 'lp-md';
+      preview.style.cssText = 'margin-top:8px;padding:10px 12px;background:var(--surface2);border-radius:8px;min-height:24px;';
+      notesEl.parentElement.appendChild(preview);
+      notesEl.addEventListener('input', () => {
+        const p = document.getElementById('ev-notes-preview');
+        if (p) p.innerHTML = renderMarkdown(notesEl.value) || '<span style="color:var(--text3);">Preview appears here as you type.</span>';
+      });
+    }
+    preview.style.display = '';
+    preview.innerHTML = renderMarkdown(notesEl.value) || '<span style="color:var(--text3);">Preview appears here as you type.</span>';
+  } else if (preview) {
+    preview.style.display = 'none';
+  }
+}
+window.setEventEnergy = setEventEnergy;
 function resetEventColor() {
   const category = document.getElementById('ev-category').value || 'other';
   document.getElementById('ev-color').value = (CAT_COLORS[category] || CAT_COLORS.other).dot;
@@ -79,6 +130,9 @@ function saveEvent() {
     recurringEndDate: document.getElementById('ev-recurring-end').value || '',
     color: document.getElementById('ev-color').dataset.reset === 'true' ? '' : (document.getElementById('ev-color').value || ''),
     notes: document.getElementById('ev-notes')?.value || existingEvent?.notes || '',
+    energy: getEventEnergy() || existingEvent?.energy || null,
+    taskId: existingEvent?.taskId || '',
+    gcalEventId: existingEvent?.gcalEventId || '',
   };
   document.getElementById('ev-color').dataset.reset = '';
   if (editingEventId) {
@@ -90,6 +144,15 @@ function saveEvent() {
   if (navigator.vibrate) navigator.vibrate(30);
   saveState(); render();
   closeModal('event-modal');
+  
+  if (window.gCalAccessToken) {
+    syncEventToGoogle(ev, ev.date).then(gcalId => {
+      if (gcalId) {
+        ev.gcalEventId = gcalId;
+        saveState();
+      }
+    });
+  }
 }
 
 function itemLabelForUndo(entry) {
@@ -120,7 +183,16 @@ function restoreUndoEntry(entry) {
   if (redoStack.length > MAX_UNDO_ENTRIES) redoStack.shift();
   
   if (entry.type === 'delete_event') {
-    state.events.push(entry.payload);
+    const ev = entry.payload;
+    state.events.push(ev);
+    if (window.gCalAccessToken) {
+      syncEventToGoogle(ev, ev.date).then(gcalId => {
+        if (gcalId) {
+          ev.gcalEventId = gcalId;
+          saveState();
+        }
+      });
+    }
   } else if (entry.type === 'delete_task') {
     state.tasks.push(entry.payload);
   } else if (entry.type === 'delete_attendance') {
@@ -207,6 +279,9 @@ function deleteEvent(id) {
   let entry = null;
   if (ev) {
     entry = pushUndoEntry({ type: 'delete_event', payload: { ...ev } });
+    if (ev.gcalEventId && window.gCalAccessToken) {
+      deleteEventFromGoogle(ev.gcalEventId);
+    }
   }
   state.events = state.events.filter(e=>e.id!==id);
   saveState(); render();
@@ -275,6 +350,15 @@ function saveQuickEvent() {
   if (navigator.vibrate) navigator.vibrate(30);
   saveState(); render();
   closeQuickAdd();
+  
+  if (window.gCalAccessToken) {
+    syncEventToGoogle(ev, ev.date).then(gcalId => {
+      if (gcalId) {
+        ev.gcalEventId = gcalId;
+        saveState();
+      }
+    });
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -338,6 +422,15 @@ function duplicateEvent(id) {
   saveState();
   render();
   showToast(`✓ "${ev.title}" duplicated for ${newDate}`);
+  
+  if (window.gCalAccessToken) {
+    syncEventToGoogle(newEvent, newEvent.date).then(gcalId => {
+      if (gcalId) {
+        newEvent.gcalEventId = gcalId;
+        saveState();
+      }
+    });
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -384,306 +477,39 @@ function editEventFromNotes() {
   history.replaceState({ panel: 'modal', modal: 'event-modal', view: state.currentView || DEFAULT_VIEW }, '', location.href);
 }
 
+// [REFACTORED] Task CRUD has been moved to js/tasks.js
+// [REFACTORED] Habits CRUD logic has been moved to js/habits.js
+
 // ══════════════════════════════════════════════
-//  TASKS CRUD
+//  EVENT COMPLETION TRACKING
+//  Used by js/proactive.js to know which past events were actually attended
+//  (vs missed) so it only nags about the latter.
 // ══════════════════════════════════════════════
-let taskModalSubtasks = [];
-
-function renderTaskModalSubtasks() {
-  const el = document.getElementById('tk-subtasks-list');
-  if (!el) return;
-  el.innerHTML = taskModalSubtasks.map(st => `<div class="subtask-editor-item">
-    <span>${esc(st.name)}</span>
-    <button type="button" onclick="removeTaskModalSubtask('${esc(st.id)}')">x</button>
-  </div>`).join('');
-}
-
-function addTaskModalSubtask() {
-  const input = document.getElementById('tk-subtask-input');
-  const name = input.value.trim();
-  if (!name) return;
-  taskModalSubtasks.push({ id: 'st' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), name, done: false });
-  input.value = '';
-  renderTaskModalSubtasks();
-}
-
-function removeTaskModalSubtask(id) {
-  taskModalSubtasks = taskModalSubtasks.filter(st => st.id !== id);
-  renderTaskModalSubtasks();
-}
-
-function showAddTaskModal() {
-  taskModalSubtasks = [];
-  document.getElementById('tk-name').value = '';
-  document.getElementById('tk-due').value = todayStr();
-  document.getElementById('tk-priority').value = 'medium';
-  document.getElementById('tk-recurring').value = 'none';
-  document.getElementById('tk-recurring-day').value = String(new Date().getDay());
-  document.getElementById('tk-subtask-input').value = '';
-  renderTaskModalSubtasks();
-  openModal('task-modal');
-}
-function saveTask() {
-  const name = document.getElementById('tk-name').value.trim();
-  if (!name) { alert('Please enter a task name'); return; }
-  state.tasks.push({
-    id: 't'+Date.now(),
-    name,
-    due: document.getElementById('tk-due').value,
-    priority: document.getElementById('tk-priority').value,
-    subtasks: taskModalSubtasks,
-    recurring: document.getElementById('tk-recurring').value,
-    recurringDay: Number(document.getElementById('tk-recurring-day').value),
-    doneDates: [],
-    done: false,
-  });
-  saveState(); render();
-  closeModal('task-modal');
-}
-function toggleTask(id, date = todayStr()) {
-  const t = state.tasks.find(t=>t.id===id);
-  if (!t) return;
-
-  // Animate the checkbox before the DOM re-renders
-  const checkEl = document.querySelector(`.task-check[onclick*="'${id}'"]`);
-  if (checkEl) {
-    checkEl.classList.remove('checking');
-    // Force reflow so removing+re-adding the class restarts the animation
-    void checkEl.offsetWidth;
-    checkEl.classList.add('checking');
-  }
-
-  if ((t.recurring || 'none') !== 'none') {
-    t.doneDates = t.doneDates || [];
-    if (t.doneDates.includes(date)) t.doneDates = t.doneDates.filter(d => d !== date);
-    else t.doneDates.push(date);
+function toggleEventComplete(id, evt) {
+  if (evt) { evt.stopPropagation(); evt.preventDefault(); }
+  if (!Array.isArray(state.completedEvents)) state.completedEvents = [];
+  const idx = state.completedEvents.indexOf(id);
+  if (idx >= 0) {
+    state.completedEvents.splice(idx, 1);
+    haptic(15);
+    showToast('Marked as not completed.');
   } else {
-    t.done = !t.done;
-    if ((t.subtasks || []).length && t.done) t.subtasks.forEach(st => st.done = true);
-  }
-
-  // Haptic: stronger pulse when completing, lighter when unchecking
-  if (isTaskDoneForDate(t, date)) haptic(45);
-  else haptic(20);
-
-  // Delay render slightly so the animation has time to play
-  setTimeout(() => { saveState(); render(); }, 180);
-}
-
-function toggleSubtask(taskId, subtaskId) {
-  const t = state.tasks.find(task => task.id === taskId);
-  const st = t?.subtasks?.find(item => item.id === subtaskId);
-  if (!st) return;
-  st.done = !st.done;
-  t.done = t.subtasks.length ? t.subtasks.every(item => item.done) : !!t.done;
-  saveState();
-  render();
-}
-function deleteTask(id) {
-  haptic(50);
-  const task = state.tasks.find(t => t.id === id);
-  let entry = null;
-  if (task) {
-    entry = pushUndoEntry({ type: 'delete_task', payload: { ...task } });
-  }
-  state.tasks = state.tasks.filter(t=>t.id!==id);
-  saveState(); render();
-  if (entry) showDeleteUndoToast(entry);
-}
-
-// ══════════════════════════════════════════════
-//  HABITS CRUD + INTERACTIONS
-// ══════════════════════════════════════════════
-let editingHabitId = null;
-const DAY_INITIALS = ['S','M','T','W','T','F','S'];
-
-function _buildHabitWeekdayPicker(selected) {
-  const wrap = document.getElementById('hb-weekday-picker');
-  if (!wrap) return;
-  wrap.innerHTML = DAY_INITIALS.map((d, i) => {
-    const on = selected.includes(i);
-    return `<button type="button" class="hb-day-pill${on ? ' on' : ''}" data-day="${i}" onclick="toggleHabitWeekday(${i})">${d}</button>`;
-  }).join('');
-}
-
-function _buildHabitColorPicker(selected) {
-  const wrap = document.getElementById('hb-color-picker');
-  if (!wrap) return;
-  wrap.innerHTML = HABIT_COLOR_PRESETS.map(c => {
-    const on = (selected || '').toLowerCase() === c.toLowerCase();
-    return `<button type="button" class="hb-color-swatch${on ? ' on' : ''}" data-color="${c}" style="background:${c};" aria-label="Color ${c}" onclick="selectHabitColor('${c}')"></button>`;
-  }).join('');
-}
-
-function toggleHabitWeekday(day) {
-  const btn = document.querySelector('.hb-day-pill[data-day="' + day + '"]');
-  if (!btn) return;
-  btn.classList.toggle('on');
-}
-
-function selectHabitColor(color) {
-  document.querySelectorAll('.hb-color-swatch').forEach(el => el.classList.toggle('on', el.dataset.color === color));
-}
-
-function _getHabitFormSelectedWeekdays() {
-  return Array.from(document.querySelectorAll('.hb-day-pill.on')).map(b => Number(b.dataset.day));
-}
-
-function _getHabitFormColor() {
-  const on = document.querySelector('.hb-color-swatch.on');
-  return on ? on.dataset.color : HABIT_COLOR_PRESETS[0];
-}
-
-function updateHabitTypeUI() {
-  const type = document.getElementById('hb-type').value;
-  document.getElementById('hb-counter-row').style.display = type === 'counter' ? '' : 'none';
-}
-
-function updateHabitFrequencyUI() {
-  const freq = document.getElementById('hb-frequency').value;
-  document.getElementById('hb-weekdays-row').style.display = freq === 'weekly' ? '' : 'none';
-}
-
-function showAddHabitModal() {
-  editingHabitId = null;
-  document.getElementById('habit-modal-title').textContent = 'Add Habit';
-  document.getElementById('hb-name').value = '';
-  document.getElementById('hb-emoji').value = '⭐';
-  document.getElementById('hb-type').value = 'checkoff';
-  document.getElementById('hb-target').value = 1;
-  document.getElementById('hb-unit').value = '';
-  document.getElementById('hb-frequency').value = 'daily';
-  document.getElementById('hb-reminder').value = '';
-  document.getElementById('hb-delete-btn').style.display = 'none';
-  _buildHabitWeekdayPicker([1,2,3,4,5]);
-  _buildHabitColorPicker(HABIT_COLOR_PRESETS[0]);
-  updateHabitTypeUI();
-  updateHabitFrequencyUI();
-  openModal('habit-modal');
-}
-
-function editHabit(id) {
-  const h = (state.habits || []).find(x => x.id === id);
-  if (!h) return;
-  editingHabitId = id;
-  document.getElementById('habit-modal-title').textContent = 'Edit Habit';
-  document.getElementById('hb-name').value = h.name || '';
-  document.getElementById('hb-emoji').value = h.emoji || '⭐';
-  document.getElementById('hb-type').value = h.type || 'checkoff';
-  document.getElementById('hb-target').value = h.target || 1;
-  document.getElementById('hb-unit').value = h.unit || '';
-  document.getElementById('hb-frequency').value = h.frequency || 'daily';
-  document.getElementById('hb-reminder').value = h.reminderTime || '';
-  document.getElementById('hb-delete-btn').style.display = '';
-  _buildHabitWeekdayPicker(Array.isArray(h.weekdays) && h.weekdays.length ? h.weekdays : [1,2,3,4,5]);
-  _buildHabitColorPicker(h.color || HABIT_COLOR_PRESETS[0]);
-  updateHabitTypeUI();
-  updateHabitFrequencyUI();
-  openModal('habit-modal');
-}
-
-function saveHabit() {
-  const name = document.getElementById('hb-name').value.trim();
-  if (!name) { alert('Please enter a habit name'); return; }
-  const type = document.getElementById('hb-type').value;
-  const frequency = document.getElementById('hb-frequency').value;
-  const target = Math.max(1, Number(document.getElementById('hb-target').value) || 1);
-  const unit = document.getElementById('hb-unit').value.trim();
-  const reminderTime = document.getElementById('hb-reminder').value || '';
-  let weekdays = _getHabitFormSelectedWeekdays();
-  if (frequency === 'daily' || !weekdays.length) weekdays = [0,1,2,3,4,5,6];
-  const color = _getHabitFormColor();
-  const emoji = document.getElementById('hb-emoji').value.trim() || '⭐';
-
-  if (!Array.isArray(state.habits)) state.habits = [];
-
-  if (editingHabitId) {
-    const idx = state.habits.findIndex(h => h.id === editingHabitId);
-    if (idx >= 0) {
-      const existing = state.habits[idx];
-      state.habits[idx] = {
-        ...existing,
-        name, emoji, color, type, target, unit, frequency, weekdays, reminderTime,
-        weeklyTarget: frequency === 'daily' ? 7 : weekdays.length
-      };
+    state.completedEvents.push(id);
+    // Cap the list so it doesn't grow forever.
+    if (state.completedEvents.length > 500) {
+      state.completedEvents = state.completedEvents.slice(-500);
     }
-  } else {
-    state.habits.push({
-      id: 'h' + Date.now() + Math.random().toString(36).slice(2),
-      name, emoji, color, type, target, unit, frequency, weekdays,
-      weeklyTarget: frequency === 'daily' ? 7 : weekdays.length,
-      createdAt: todayStr(),
-      completions: {},
-      reminderTime,
-      archived: false
-    });
+    haptic(35);
+    showToast('✓ Marked complete.');
   }
-  if (navigator.vibrate) navigator.vibrate(30);
-  saveState(); render();
-  closeModal('habit-modal');
-}
-
-function deleteHabitFromModal() {
-  if (!editingHabitId) return;
-  const h = (state.habits || []).find(x => x.id === editingHabitId);
-  if (!h) { closeModal('habit-modal'); return; }
-  if (!confirm('Delete habit "' + h.name + '"? Streak history will be lost.')) return;
-  state.habits = state.habits.filter(x => x.id !== editingHabitId);
-  editingHabitId = null;
-  saveState(); render();
-  closeModal('habit-modal');
-  showToast('Habit deleted');
-}
-
-function _findHabit(id) {
-  return (state.habits || []).find(h => h.id === id);
-}
-
-function toggleHabitDone(id) {
-  const h = _findHabit(id);
-  if (!h) return;
-  const today = todayStr();
-  if (!h.completions) h.completions = {};
-  if (isHabitDoneForDate(h, today)) {
-    delete h.completions[today];
-  } else {
-    h.completions[today] = h.type === 'counter' ? getHabitDailyTarget(h) : 1;
-    if (navigator.vibrate) navigator.vibrate(20);
-    const streak = getHabitStreak(h);
-    if (streak > 0 && streak % 7 === 0) showToast('🔥 ' + streak + '-day streak on ' + h.name + '!');
+  // Also clear any dismissed-missed entry so the toggle is symmetric.
+  if (Array.isArray(state.dismissedMissedEvents)) {
+    state.dismissedMissedEvents = state.dismissedMissedEvents.filter(x => x !== id);
   }
   saveState(); render();
+  if (typeof checkMissedSchedule === 'function') checkMissedSchedule();
 }
-
-function incrementHabit(id) {
-  const h = _findHabit(id);
-  if (!h) return;
-  const today = todayStr();
-  if (!h.completions) h.completions = {};
-  const cur = getHabitProgress(h, today);
-  const target = getHabitDailyTarget(h);
-  h.completions[today] = cur + 1;
-  if (navigator.vibrate) navigator.vibrate(15);
-  // Toast when target newly reached
-  if (cur < target && cur + 1 >= target) {
-    const streak = getHabitStreak(h);
-    showToast('✅ ' + h.name + ' — done! 🔥 ' + streak);
-  }
-  saveState(); render();
-}
-
-function decrementHabit(id) {
-  const h = _findHabit(id);
-  if (!h) return;
-  const today = todayStr();
-  if (!h.completions) h.completions = {};
-  const cur = getHabitProgress(h, today);
-  if (cur <= 0) return;
-  if (cur - 1 <= 0) delete h.completions[today];
-  else h.completions[today] = cur - 1;
-  if (navigator.vibrate) navigator.vibrate(15);
-  saveState(); render();
-}
+window.toggleEventComplete = toggleEventComplete;
 
 // ══════════════════════════════════════════════
 //  MOBILE CHAT
@@ -712,6 +538,8 @@ function closeChatOverlay(useHistory = true) {
 //  API KEY
 // ══════════════════════════════════════════════
 function saveApiKey() {
+  // Also save name + personality whenever Save AI Settings is clicked
+  changeAiSettings();
   const key = document.getElementById('settings-api-key').value.trim();
   const statusEl = document.getElementById('api-key-status');
   state.apiKey = key;
@@ -739,6 +567,15 @@ function saveApiKey() {
 //  AI CHAT
 // ══════════════════════════════════════════════
 
+// Save AI name + personality settings
+function changeAiSettings() {
+  const nameEl = document.getElementById('settings-username');
+  const personaEl = document.getElementById('settings-personality');
+  if (nameEl) state.userName = nameEl.value.trim() || 'Boss';
+  if (personaEl) state.aiPersonality = personaEl.value;
+  saveState();
+}
+
 // Gemini fetch — native browser CORS support, no proxy needed
 function changeTheme() {
   const theme = document.getElementById('settings-theme').value;
@@ -756,7 +593,7 @@ function changeAccent() {
 
 function changeWeeklyHourLimit() {
   const input = document.getElementById('settings-weekly-limit');
-  const value = Math.max(10, Math.min(120, Number(input.value) || 50));
+  const value = Math.max(10, Math.min(120, Number(input.value) || 100));
   state.weeklyHourLimit = value;
   input.value = value;
   saveState();
@@ -856,7 +693,7 @@ function exportData() {
       waServer: state.waServer || '',
       currentView: state.currentView || DEFAULT_VIEW,
       showFreeTime: state.showFreeTime !== false,
-      weeklyHourLimit: state.weeklyHourLimit || 50
+      weeklyHourLimit: state.weeklyHourLimit || 100
     },
     uploadedDocs: uploadedDocs || [],
     optimizerResult: lastOptimizerResult || null
@@ -1006,7 +843,7 @@ function importData(e) {
       state.waServer = backup.settings?.waServer || '';
       state.currentView = backup.settings?.currentView || DEFAULT_VIEW;
       state.showFreeTime = backup.settings?.showFreeTime !== false;
-      state.weeklyHourLimit = backup.settings?.weeklyHourLimit || 50;
+      state.weeklyHourLimit = backup.settings?.weeklyHourLimit || 100;
       uploadedDocs = Array.isArray(backup.uploadedDocs) ? backup.uploadedDocs : [];
       lastOptimizerResult = backup.optimizerResult || null;
       document.documentElement.setAttribute('data-theme', state.theme);
@@ -1099,7 +936,10 @@ function togglePomodoro() {
         clearInterval(pomoInterval);
         pomoRunning = false;
         if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 500]); // long vibration
-        
+
+        // Log the just-completed session if the focus-stats flag is on.
+        if (state.flags?.pomodoroStats) logFocusSession(pomoMode, pomoMode === 'work' ? 25 : 5);
+
         // Switch modes
         if (pomoMode === 'work') {
           pomoMode = 'break';
@@ -1122,6 +962,34 @@ function resetPomodoro() {
   pomoTimeLeft = 25 * 60;
   updatePomoUI();
 }
+
+// ── Phase 1 — Focus session logging ──
+function logFocusSession(mode, minutes) {
+  if (!Array.isArray(state.focusLog)) state.focusLog = [];
+  state.focusLog.push({ at: new Date().toISOString(), date: todayStr(), mode: mode || 'work', minutes: Number(minutes) || 0 });
+  // Cap log to last 1000 entries
+  if (state.focusLog.length > 1000) state.focusLog = state.focusLog.slice(-1000);
+  saveState();
+}
+
+function getFocusStats() {
+  const log = Array.isArray(state.focusLog) ? state.focusLog : [];
+  const today = todayStr();
+  const week = getWeekBounds();
+  let todayMins = 0, weekMins = 0, totalMins = 0, weekWorkCount = 0;
+  log.forEach(s => {
+    const m = Number(s.minutes) || 0;
+    totalMins += m;
+    if (s.date === today) todayMins += m;
+    if (s.date >= week.startStr && s.date <= week.endStr) {
+      weekMins += m;
+      if ((s.mode || 'work') === 'work') weekWorkCount++;
+    }
+  });
+  return { todayMins, weekMins, totalMins, weekWorkCount };
+}
+window.logFocusSession = logFocusSession;
+window.getFocusStats = getFocusStats;
 
 // ══════════════════════════════════════════════
 //  PHASE 2 — DEADLINE COUNTDOWN (Feature 6)
@@ -1440,9 +1308,9 @@ function renderGrades() {
 }
 
 // ══════════════════════════════════════════════
-//  PHASE 3 — NOTIFICATIONS (Feature 1)
+//  PHASE 3 — NOTIFICATIONS (Feature 1) — Settings UI only.
+//  Scheduler/firing logic lives in js/notifications.js.
 // ══════════════════════════════════════════════
-let notifCheckInterval = null;
 
 function saveNotifPrefs() {
   state.notifMinutes = parseInt(document.getElementById('notif-minutes')?.value || '10');
@@ -1503,6 +1371,126 @@ function updateAppVersionUI() {
   statusEl.style.color = status.color || 'var(--text3)';
 }
 
+// ══════════════════════════════════════════════
+//  LABS / FEATURE FLAGS UI
+// ══════════════════════════════════════════════
+const FLAG_META = {
+  // Phase 1
+  markdownNotes:    { phase: 1, label: 'Markdown notes on events',     hint: 'Render event notes with bold/lists/links.' },
+  energyTags:       { phase: 1, label: 'Energy tag on events',         hint: 'Mark events high/medium/low energy. Used by auto-scheduler.' },
+  taskDuration:     { phase: 1, label: 'Task duration estimates',      hint: 'Add an estimate (e.g. 45 min) per task.' },
+  pomodoroStats:    { phase: 1, label: 'Focus session logging',        hint: 'Log every completed Pomodoro and show weekly focus minutes.' },
+  // Phase 2
+  eisenhower:       { phase: 2, label: 'Eisenhower matrix view',       hint: 'New 2x2 priority/urgency board for tasks.' },
+  flashcards:       { phase: 2, label: 'Flashcards (spaced repetition)', hint: 'Add review cards with SM-2 algorithm.' },
+  // Phase 3
+  nlQuickAdd:       { phase: 3, label: 'Natural-language quick-add',   hint: 'Type "ML class tomorrow 6pm" — AI parses it.' },
+  onboarding:       { phase: 3, label: 'First-run onboarding tour',    hint: 'Guided 5-slide intro for new installs.' },
+  weeklyReview:     { phase: 3, label: 'Sunday weekly AI review',      hint: 'Pushes a recap + next-week plan every Sunday 8 PM.' },
+  // Phase 4
+  dragReschedule:   { phase: 4, label: 'Drag-to-reschedule week grid', hint: 'Drag events around the calendar to move them.' },
+  taskCalendarDrag: { phase: 4, label: 'Drag tasks onto the calendar', hint: 'Drop a task into a free slot to time-block it.' },
+  autoScheduler:    { phase: 4, label: 'AI auto-scheduler',            hint: '"Schedule my week" — AI fills in study blocks.' },
+  // Phase 5
+  icalSubscribe:    { phase: 5, label: 'Live iCal subscription URL',   hint: 'Subscribe in Apple/Google Calendar instead of re-exporting.' },
+  privacyLock:      { phase: 5, label: 'Privacy lock (PIN/biometric)', hint: 'Require a PIN or biometric on every app open.' },
+};
+
+function renderLabsFlags() {
+  const el = document.getElementById('labs-flags-list');
+  if (!el) return;
+  if (!state.flags) state.flags = defaultFlags();
+  const grouped = {};
+  Object.keys(FLAG_META).forEach(name => {
+    const meta = FLAG_META[name];
+    if (!grouped[meta.phase]) grouped[meta.phase] = [];
+    grouped[meta.phase].push({ name, meta });
+  });
+  const phases = Object.keys(grouped).sort((a, b) => Number(a) - Number(b));
+  el.innerHTML = phases.map(phase => {
+    const rows = grouped[phase].map(({ name, meta }) => {
+      const on = !!state.flags[name];
+      return `<label class="lp-flag-row" style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;background:var(--surface2);border-radius:8px;cursor:pointer;">
+        <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleFeatureFlag('${esc(name)}', this.checked)" style="margin-top:3px;flex-shrink:0;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:500;color:var(--text);">${esc(meta.label)}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px;">${esc(meta.hint)}</div>
+        </div>
+      </label>`;
+    }).join('');
+    return `<div style="display:flex;flex-direction:column;gap:6px;">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;color:var(--text3);text-transform:uppercase;margin-top:6px;">Phase ${esc(phase)}</div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════
+//  Phase 5 — iCal subscription URL helpers
+// ══════════════════════════════════════════════
+function _generateIcalToken() {
+  // 32-char URL-safe random token
+  const arr = new Uint8Array(24);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function _setIcalStatus(msg, color) {
+  const el = document.getElementById('ical-status');
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.color = color || 'var(--text2)';
+  el.textContent = msg;
+}
+
+function _icalSubscribeUrl() {
+  const uid = window.auth?.currentUser?.uid;
+  if (!uid) return null;
+  if (!state.icalToken) {
+    state.icalToken = _generateIcalToken();
+    saveState();
+  }
+  // The Cloud Functions URL is typically:
+  //   https://<region>-<project>.cloudfunctions.net/icalFeed
+  // We don't know either at runtime, so let the user override via state.icalEndpoint.
+  // If not set, fall back to a placeholder the user can copy + edit.
+  const endpoint = state.icalEndpoint || 'https://REGION-PROJECT.cloudfunctions.net/icalFeed';
+  return endpoint + '?uid=' + encodeURIComponent(uid) + '&token=' + encodeURIComponent(state.icalToken);
+}
+
+async function copyIcalSubscribeUrl() {
+  if (!window.auth?.currentUser) {
+    _setIcalStatus('Sign in with Google (Cloud Sync) first.', 'var(--coral)');
+    return;
+  }
+  const url = _icalSubscribeUrl();
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    _setIcalStatus('✓ URL copied. Replace REGION-PROJECT with your Firebase project before subscribing.', 'var(--green)');
+  } catch (e) {
+    _setIcalStatus('Couldn\'t copy — your URL: ' + url, 'var(--text2)');
+  }
+}
+window.copyIcalSubscribeUrl = copyIcalSubscribeUrl;
+
+function rotateIcalToken() {
+  if (!confirm('Rotate the token? Existing calendar subscriptions will stop working until re-subscribed.')) return;
+  state.icalToken = _generateIcalToken();
+  saveState();
+  _setIcalStatus('✓ New token generated. Copy the URL again to update your calendar subscription.', 'var(--green)');
+}
+window.rotateIcalToken = rotateIcalToken;
+
+function toggleFeatureFlag(name, on) {
+  if (!state.flags) state.flags = defaultFlags();
+  state.flags[name] = !!on;
+  saveState();
+  showToast((on ? 'Enabled: ' : 'Disabled: ') + (FLAG_META[name]?.label || name));
+  if (typeof render === 'function') render();
+}
+window.toggleFeatureFlag = toggleFeatureFlag;
+
 async function checkForUpdates() {
   if (typeof window.__setLpSwStatus === 'function') {
     window.__setLpSwStatus('Checking for updates…', 'var(--text3)');
@@ -1540,142 +1528,9 @@ async function checkForUpdates() {
   }
 }
 
-function testNotification() {
-  if (Notification.permission !== 'granted') {
-    alert('Please enable notifications first.');
-    return;
-  }
-  new Notification('Lazy Panda 🐼', {
-    body: 'Notifications are working! You\'ll be reminded before class.',
-    icon: './icon.png',
-    badge: './icon.png',
-    tag: 'test'
-  });
-}
-
-function startNotificationScheduler() {
-  if (notifCheckInterval) clearInterval(notifCheckInterval);
-  checkUpcomingNotifications();
-  notifCheckInterval = setInterval(checkUpcomingNotifications, 60000);
-}
-
-// ── NOTIFICATION FIRE TRACKING ─────────────────────────────────────────────
-// Persisted to localStorage so refreshes don't re-fire or lose state.
-// Key format: 'lp_notif_fired' → { "YYYY-MM-DD": ["key1","key2",...] }
-const notifiedEvents = new Set(); // in-memory mirror for fast lookup
-
-function _loadNotifFired() {
-  const today = todayStr();
-  try {
-    const parsed = JSON.parse(localStorage.getItem('lp_notif_fired') || '{}');
-    // Prune everything except today
-    const pruned = {};
-    if (parsed[today]) pruned[today] = parsed[today];
-    localStorage.setItem('lp_notif_fired', JSON.stringify(pruned));
-    (pruned[today] || []).forEach(k => notifiedEvents.add(k));
-  } catch(e) {}
-}
-_loadNotifFired();
-
-function _markNotifFired(key) {
-  notifiedEvents.add(key);
-  const today = todayStr();
-  try {
-    const parsed = JSON.parse(localStorage.getItem('lp_notif_fired') || '{}');
-    if (!parsed[today]) parsed[today] = [];
-    if (!parsed[today].includes(key)) {
-      parsed[today].push(key);
-      localStorage.setItem('lp_notif_fired', JSON.stringify(parsed));
-    }
-  } catch(e) {}
-}
-
-function _fireNotif(key, title, body) {
-  if (notifiedEvents.has(key)) return; // already fired
-  if (Notification.permission !== 'granted' || !state.notificationsEnabled) return;
-  _markNotifFired(key);
-  new Notification(title, {
-    body,
-    icon: './icon.png',
-    badge: './icon.png',
-    tag: key,
-    requireInteraction: false
-  });
-}
-
-function checkUpcomingNotifications() {
-  if (Notification.permission !== 'granted' || !state.notificationsEnabled) return;
-
-  const mins = Number(state.notifMinutes) || 10;
-  const now = nowMins();
-  const today = todayStr();
-  const todayEvs = getTodayEvents();
-
-  // ── Events ──
-  todayEvs.forEach(ev => {
-    const start = timeMins(ev.start);
-    const diff = start - now;
-    // Fire if within the window: between 0 and (mins + 1) so we don't miss a tick
-    if (diff <= 0 || diff > mins + 1) return;
-
-    const key = `${today}-ev-${ev.id}`;
-    _fireNotif(
-      key,
-      `🐼 ${ev.title} in ${Math.round(diff)} min`,
-      `${fmt12(ev.start)} – ${fmt12(ev.end)}${ev.location ? ' · ' + ev.location : ''}`
-    );
-
-    // WhatsApp reminder
-    const waKey = `wa-${today}-${ev.id}`;
-    if (state.waPhone && state.waServer && !notifiedEvents.has(waKey)) {
-      _markNotifFired(waKey);
-      sendWhatsAppReminder(ev, Math.round(diff));
-    }
-  });
-
-  // ── Tasks due today (fire once, in the morning window or whenever app opens) ──
-  const taskNotifHour = 8; // fire task reminders at/after 8 AM
-  if (now >= taskNotifHour * 60) {
-    state.tasks.filter(t => !isTaskComplete(t) && t.due === today).forEach(task => {
-      const key = `${today}-task-${task.id}`;
-      _fireNotif(
-        key,
-        `🐼 Task due today: ${task.name}`,
-        `Priority: ${task.priority} — tap to open Lazy Panda`
-      );
-    });
-  }
-
-  // ── Custom reminders (set by AI or user) ──
-  if (Array.isArray(state.customReminders)) {
-    state.customReminders.forEach(rem => {
-      if (rem.fired || rem.date !== today) return;
-      const remMins = timeMins(rem.time);
-      const diff = remMins - now;
-      if (diff <= 0 && diff >= -2) { // fire within 2-min window of exact time
-        const key = `${today}-rem-${rem.id}`;
-        _fireNotif(key, `🐼 Reminder: ${rem.title}`, rem.note || '');
-        rem.fired = true;
-        saveState();
-      }
-    });
-  }
-
-  // ── Habit reminders ──
-  if (Array.isArray(state.habits)) {
-    state.habits.forEach(h => {
-      if (h.archived || !h.reminderTime) return;
-      if (!isHabitScheduledOnDay(h, today)) return;
-      if (isHabitDoneForDate(h, today)) return; // already done — don't nag
-      const remMins = timeMins(h.reminderTime);
-      const diff = remMins - now;
-      if (diff <= 0 && diff >= -2) {
-        const key = `${today}-habit-${h.id}`;
-        _fireNotif(key, `🐼 Habit: ${h.emoji} ${h.name}`, h.type === 'counter' ? `Log today's ${h.unit || 'progress'}` : 'Tap to check it off');
-      }
-    });
-  }
-}
+// [REFACTORED] Local notification scheduler has been moved to js/notifications.js
+// (testNotification, startNotificationScheduler, checkUpcomingNotifications,
+//  _fireNotif, _markNotifFired, _loadNotifFired, notifiedEvents Set)
 
 // ══════════════════════════════════════════════
 //  PHASE 3 — SHARE SCHEDULE (Feature 18)
@@ -1738,140 +1593,7 @@ async function shareSchedule(mode) {
   }
 }
 
-const GCAL_SCOPES = 'https://www.googleapis.com/auth/calendar';
-let gCalTokenClient = null;
-let gCalAccessToken = null;
-
-function updateGCalUI() {
-  const connected = !!gCalAccessToken;
-  document.getElementById('gcal-connect-btn').style.display = connected ? 'none' : '';
-  document.getElementById('gcal-sync-btn').style.display = connected ? '' : 'none';
-  document.getElementById('gcal-import-btn').style.display = connected ? '' : 'none';
-  document.getElementById('gcal-disconnect-btn').style.display = connected ? '' : 'none';
-  const statusEl = document.getElementById('gcal-status');
-  if (connected) {
-    statusEl.style.display = 'block';
-    statusEl.style.color = 'var(--green)';
-    statusEl.textContent = '✅ Connected to Google Calendar';
-  }
-}
-
-function setGCalStatus(msg, color = 'var(--text3)') {
-  const el = document.getElementById('gcal-status');
-  if (!el) return;
-  el.style.display = 'block';
-  el.style.color = color;
-  el.textContent = msg;
-}
-
-async function loadGISLibrary() {
-  if (window.google?.accounts?.oauth2) return true;
-  return new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.onload = () => res(true);
-    s.onerror = () => rej(new Error('Failed to load Google Identity Services'));
-    document.head.appendChild(s);
-  });
-}
-
-async function connectGoogleCalendar() {
-  const clientId = "428339420555-1mvluo2fb8mo5cntrl0rrrbk8pfqn1jh.apps.googleusercontent.com";
-  setGCalStatus('Loading Google Sign-In…', 'var(--text3)');
-  try {
-    await loadGISLibrary();
-    gCalTokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: GCAL_SCOPES,
-      callback: (resp) => {
-        if (resp.error) { setGCalStatus('❌ Auth error: ' + resp.error, 'var(--coral)'); return; }
-        gCalAccessToken = resp.access_token;
-        updateGCalUI();
-      }
-    });
-    gCalTokenClient.requestAccessToken({ prompt: 'consent' });
-  } catch(e) {
-    setGCalStatus('❌ ' + e.message, 'var(--coral)');
-  }
-}
-
-function disconnectGoogleCalendar() {
-  if (gCalAccessToken) window.google?.accounts?.oauth2?.revoke(gCalAccessToken);
-  gCalAccessToken = null;
-  updateGCalUI();
-  const el = document.getElementById('gcal-status');
-  if (el) { el.style.display = 'none'; }
-}
-
-async function syncToGoogleCalendar() {
-  if (!gCalAccessToken) return;
-  setGCalStatus('⏳ Syncing events to Google Calendar…', 'var(--text3)');
-  const now = new Date();
-  const eventsToSync = [];
-  for (let i = 0; i < 30; i++) {
-    const d = new Date(now); d.setDate(now.getDate() + i);
-    const ds = d.toISOString().split('T')[0];
-    getEventsForDay(ds, d.getDay()).forEach(ev => eventsToSync.push({ ev, ds }));
-  }
-  let synced = 0, errors = 0;
-  for (const { ev, ds } of eventsToSync.slice(0, 50)) {
-    const [sh, sm] = ev.start.split(':').map(Number);
-    const [eh, em] = ev.end.split(':').map(Number);
-    const startDt = new Date(ds); startDt.setHours(sh, sm, 0, 0);
-    const endDt   = new Date(ds); endDt.setHours(eh, em, 0, 0);
-    const body = {
-      summary: ev.title,
-      location: ev.location || '',
-      start: { dateTime: startDt.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-      end:   { dateTime: endDt.toISOString(),   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-      description: ev.notes ? `Notes:\n${ev.notes}` : 'Added by Lazy Panda 🐼'
-    };
-    try {
-      const r = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${gCalAccessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      if (r.ok) synced++; else errors++;
-    } catch{ errors++; }
-  }
-  setGCalStatus(`✅ Synced ${synced} events${errors ? ` (${errors} errors)` : ''} to Google Calendar.`, 'var(--green)');
-}
-
-async function importFromGoogleCalendar() {
-  if (!gCalAccessToken) return;
-  setGCalStatus('⏳ Importing from Google Calendar…', 'var(--text3)');
-  try {
-    const now = new Date();
-    const timeMin = now.toISOString();
-    const timeMax = new Date(now.getTime() + 30 * 86400000).toISOString();
-    const r = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=50`,
-      { headers: { Authorization: `Bearer ${gCalAccessToken}` } }
-    );
-    const data = await r.json();
-    const items = data.items || [];
-    let imported = 0;
-    items.forEach(item => {
-      if (!item.start?.dateTime) return; // skip all-day
-      const start = new Date(item.start.dateTime);
-      const end   = new Date(item.end.dateTime);
-      const ds = start.toISOString().split('T')[0];
-      const pad = n => String(n).padStart(2,'0');
-      const startStr = `${pad(start.getHours())}:${pad(start.getMinutes())}`;
-      const endStr   = `${pad(end.getHours())}:${pad(end.getMinutes())}`;
-      const existing = state.events.find(e => e.title === item.summary && e.date === ds && e.start === startStr);
-      if (!existing) {
-        state.events.push({ id:'gcal_'+item.id, title:item.summary||'Untitled', date:ds, start:startStr, end:endStr, location:item.location||'', category:'other', recurring:'none', notes:item.description||'' });
-        imported++;
-      }
-    });
-    saveState(); render();
-    setGCalStatus(`✅ Imported ${imported} new events from Google Calendar.`, 'var(--green)');
-  } catch(e) {
-    setGCalStatus('❌ Import failed: ' + e.message, 'var(--coral)');
-  }
-}
+// [REFACTORED] Google Calendar integration has been moved to js/calendar-api.js
 
 // ══════════════════════════════════════════════
 //  PHASE 4 — WHATSAPP REMINDERS (Feature 19)
@@ -1964,15 +1686,20 @@ async function generateShareLink(mode = 'week') {
     }
     
     if (navigator.share) {
-      await navigator.share({
-        title: 'My Lazy Panda Schedule',
-        text: 'Here is my schedule!',
-        url: url.toString()
-      });
-    } else {
-      await navigator.clipboard.writeText(url.toString());
-      showToast('✅ Share link copied to clipboard!');
+      try {
+        await navigator.share({
+          title: 'My Lazy Panda Schedule',
+          text: 'Here is my schedule!',
+          url: url.toString()
+        });
+        return; // shared successfully via native sheet
+      } catch(shareErr) {
+        // AbortError = user dismissed, or API unsupported on this platform — fall through to clipboard
+      }
     }
+    // Clipboard fallback (desktop browsers, or when native share fails/is dismissed)
+    await navigator.clipboard.writeText(url.toString());
+    showToast('✅ Share link copied to clipboard!');
   } catch (e) {
     console.error('Share error:', e);
     showToast('❌ Failed to generate share link.');
@@ -2040,279 +1767,8 @@ function exitSharedView() {
   showView('dashboard');
 }
 
-// ══════════════════════════════════════════════
-//  PHASE 6.4 — CLOUD SYNC (GOOGLE FIREBASE)
-// ══════════════════════════════════════════════
-let firebaseUnsubscribe = null;
-let lastSyncTimestamp = 0;
-let syncInProgress = false;
-
-// TODO: Replace this placeholder config with an actual Firebase project configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyABHSM6EFseBSxqKMajA0OPEoQd81KkJDM",
-  authDomain: "gen-lang-client-0412969424.firebaseapp.com",
-  projectId: "gen-lang-client-0412969424",
-  storageBucket: "gen-lang-client-0412969424.firebasestorage.app",
-  messagingSenderId: "428339420555",
-  appId: "1:428339420555:web:8b040024cd3c039ca0638e",
-  measurementId: "G-R0DYVP159S"
-};
-
-// Initialize Firebase
-let firebaseApp, auth, db;
-try {
-  if (firebase.apps.length === 0) {
-    firebaseApp = firebase.initializeApp(firebaseConfig);
-  } else {
-    firebaseApp = firebase.app();
-  }
-  auth = firebase.auth();
-  db = firebase.firestore();
-} catch (e) {
-  console.error("Firebase init error:", e);
-}
-
-function updateFirebaseUI(user) {
-  const statusEl = document.getElementById('firebase-status');
-  const signinBtn = document.getElementById('fb-signin-btn');
-  const signoutBtn = document.getElementById('fb-signout-btn');
-  const syncBtn = document.getElementById('fb-sync-btn');
-  
-  if (user) {
-    if (statusEl) {
-      statusEl.textContent = `Signed in as ${user.email}`;
-      statusEl.style.color = 'var(--green)';
-    }
-    if (signinBtn) signinBtn.style.display = 'none';
-    if (signoutBtn) signoutBtn.style.display = 'inline-block';
-    if (syncBtn) syncBtn.removeAttribute('disabled');
-  } else {
-    if (statusEl) {
-      statusEl.textContent = 'Not signed in.';
-      statusEl.style.color = 'var(--text3)';
-    }
-    if (signinBtn) signinBtn.style.display = 'inline-block';
-    if (signoutBtn) signoutBtn.style.display = 'none';
-    if (syncBtn) syncBtn.setAttribute('disabled', 'true');
-  }
-}
-
-if (auth) {
-  auth.onAuthStateChanged(user => {
-    updateFirebaseUI(user);
-    if (user) {
-      setupRealtimeSyncListener(user.uid);
-      restoreFromCloud();
-    } else {
-      if (firebaseUnsubscribe) {
-        firebaseUnsubscribe();
-        firebaseUnsubscribe = null;
-      }
-    }
-  });
-}
-
-function signInWithGoogle() {
-  const provider = new firebase.auth.GoogleAuthProvider();
-  auth.signInWithPopup(provider).catch(e => {
-    console.error("Sign in failed", e);
-    const el = document.getElementById('firebase-status');
-    if (el) {
-      el.textContent = 'Sign in failed: ' + e.message;
-      el.style.color = 'var(--coral)';
-    }
-  });
-}
-
-function signOut() {
-  auth.signOut().then(() => {
-    updateFirebaseUI(null);
-  });
-}
-
-function initializeCloudSync() {
-  // No-op, Firebase handles this via onAuthStateChanged
-}
-
-function setupRealtimeSyncListener(uid) {
-  if (firebaseUnsubscribe) firebaseUnsubscribe();
-  
-  firebaseUnsubscribe = db.collection('users').doc(uid).onSnapshot(doc => {
-    if (doc.exists) {
-      handleRemoteSync(doc.data(), doc.metadata.hasPendingWrites);
-    }
-  }, err => {
-    console.error('Realtime sync error:', err);
-  });
-}
-
-function handleRemoteSync(cloudState, isLocal) {
-  if (isLocal) return;
-  
-  const remoteTimestamp = cloudState.updated_at || 0;
-  if (remoteTimestamp > lastSyncTimestamp) {
-    mergeCloudData(cloudState);
-    lastSyncTimestamp = remoteTimestamp;
-  }
-}
-
-function mergeCloudData(cloudState) {
-  if (cloudState.events && Array.isArray(cloudState.events)) {
-    cloudState.events.forEach(cloudEv => {
-      const idx = state.events.findIndex(e => e.id === cloudEv.id);
-      if (idx < 0) state.events.push(cloudEv);
-    });
-  }
-  if (cloudState.tasks && Array.isArray(cloudState.tasks)) {
-    cloudState.tasks.forEach(cloudTask => {
-      const idx = state.tasks.findIndex(t => t.id === cloudTask.id);
-      if (idx < 0) state.tasks.push(cloudTask);
-    });
-  }
-  saveState();
-  render();
-}
-
-let syncTimeout = null;
-function autoSyncToCloud() {
-  if (!auth || !auth.currentUser) return;
-  if (syncTimeout) clearTimeout(syncTimeout);
-  syncTimeout = setTimeout(() => {
-    syncToCloud(true);
-  }, 3000);
-}
-
-async function syncToCloud(isAuto = false) {
-  if (syncInProgress) return;
-  syncInProgress = true;
-  
-  const user = auth?.currentUser;
-  const el = document.getElementById('firebase-status');
-  
-  if (!user) {
-    syncInProgress = false;
-    return;
-  }
-  
-  if (!isAuto && el) {
-    el.style.color = 'var(--text3)';
-    el.textContent = `⏳ Syncing to cloud... (${user.email})`;
-  }
-  
-  try {
-    const payload = { ...state };
-    delete payload.apiKey;
-    const now = new Date().getTime();
-    payload.updated_at = now;
-    lastSyncTimestamp = now;
-    
-    await db.collection('users').doc(user.uid).set(payload, { merge: true });
-    
-    syncInProgress = false;
-    if (!isAuto && el) {
-      el.style.color = 'var(--green)';
-      el.textContent = `✅ Synced to cloud (${user.email})`;
-    }
-  } catch(e) {
-    syncInProgress = false;
-    console.error('Sync error:', e);
-    if (!isAuto && el) {
-      el.style.color = 'var(--coral)';
-      el.textContent = '❌ Sync failed: ' + e.message;
-    }
-  }
-}
-
-async function restoreFromCloud() {
-  const user = auth?.currentUser;
-  const el = document.getElementById('firebase-status');
-  if (!user) return;
-  
-  if (el) {
-    el.style.color = 'var(--text3)';
-    el.textContent = `⏳ Restoring from cloud... (${user.email})`;
-  }
-  
-  try {
-    const doc = await db.collection('users').doc(user.uid).get();
-    if (!doc.exists) {
-      if (el) {
-        el.style.color = 'var(--text3)';
-        el.textContent = `Welcome! No cloud data found for ${user.email}.`;
-      }
-      return;
-    }
-    
-    const cloudState = doc.data();
-    lastSyncTimestamp = cloudState.updated_at || new Date().getTime();
-    
-    const localApiKey = state.apiKey;
-    const localGcalClientId = state.gcalClientId;
-    const localWaPhone = state.waPhone;
-    
-    if (cloudState.events && Array.isArray(cloudState.events)) {
-      cloudState.events.forEach(cloudEv => {
-        const idx = state.events.findIndex(e => e.id === cloudEv.id);
-        if (idx < 0) state.events.push(cloudEv);
-      });
-    }
-    
-    if (cloudState.tasks && Array.isArray(cloudState.tasks)) {
-      cloudState.tasks.forEach(cloudTask => {
-        const idx = state.tasks.findIndex(t => t.id === cloudTask.id);
-        if (idx < 0) state.tasks.push(cloudTask);
-      });
-    }
-    
-    if (cloudState.grades && Array.isArray(cloudState.grades)) state.grades = cloudState.grades;
-    if (cloudState.attendance && Array.isArray(cloudState.attendance)) state.attendance = cloudState.attendance;
-    
-    if (Array.isArray(cloudState.habits)) {
-      if (!Array.isArray(state.habits)) state.habits = [];
-      cloudState.habits.forEach(cloudH => {
-        const idx = state.habits.findIndex(h => h.id === cloudH.id);
-        if (idx < 0) {
-          state.habits.push(cloudH);
-        } else {
-          state.habits[idx].completions = { ...(state.habits[idx].completions || {}), ...(cloudH.completions || {}) };
-        }
-      });
-    }
-    
-    if (!state.apiKey && localApiKey) state.apiKey = localApiKey;
-    if (!state.gcalClientId && localGcalClientId) state.gcalClientId = localGcalClientId;
-    if (!state.waPhone && localWaPhone) state.waPhone = localWaPhone;
-    
-    saveState();
-    render();
-    if (el) {
-      el.style.color = 'var(--green)';
-      el.textContent = `✅ Restored and syncing (${user.email})`;
-    }
-  } catch(e) {
-    console.error('Restore error:', e);
-    if (el) {
-      el.style.color = 'var(--coral)';
-      el.textContent = '❌ Restore failed: ' + e.message;
-    }
-  }
-}
-
-// Listen for messages from Service Worker (background sync triggers)
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('message', event => {
-    if (event.data.type === 'BACKGROUND_CLOUD_SYNC') {
-      console.log('Background cloud sync triggered by SW');
-      autoSyncToCloud();
-    }
-    if (event.data.type === 'BACKGROUND_NOTIFICATION_CHECK') {
-      console.log('Background notification check triggered by SW');
-      if (typeof checkUpcomingNotifications === 'function') {
-        checkUpcomingNotifications();
-      }
-    }
-  });
-}
+// [REFACTORED] Cloud sync (Firebase Auth + Firestore) is in js/cloud-sync.js
+// [REFACTORED] FCM push notifications are in js/fcm.js
 
 function initializeNavigation() {
   const hashView = location.hash ? location.hash.slice(1) : '';
@@ -2373,6 +1829,8 @@ window.addEventListener('popstate', function(e) {
 // ══════════════════════════════════════════════
 // ══════════════════════════════════════════════
 loadState();
+// Privacy lock check before any UI is interactive (Phase 5)
+if (typeof maybeShowPrivacyLock === 'function') maybeShowPrivacyLock();
 render();
 initializeNavigation();
 
@@ -2719,3 +2177,17 @@ if (_origSafeRender) {
     observeContainers();
   }
 })();
+
+// Auto-welcome on launch (with slight delay so UI settles)
+setTimeout(() => {
+  if (typeof autoWelcomeMessage === 'function') {
+    autoWelcomeMessage();
+  }
+  if (typeof maybeShowOnboarding === 'function') {
+    maybeShowOnboarding();
+  }
+  if (typeof maybeShowWeeklyReview === 'function') {
+    maybeShowWeeklyReview();
+  }
+}, 1500);
+
